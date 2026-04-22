@@ -133,7 +133,7 @@ int main(int argc, char** argv)
     }
     fin.close();
     if (lines.size() < 9) {
-        ROS_ERROR("File has fewer than 9 lines, cannot get 3 blocks.");
+        ROS_ERROR("File has fewer than 9 lines, cannot get enough blocks.");
         return 1;
     }
 
@@ -164,20 +164,18 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    // 取最后3个 block
+    // 使用所有解析到的 block 做联合标定
     std::vector<Eigen::Vector3d> L, C;
-    for (size_t k = blocks.size() - 3; k < blocks.size(); ++k) 
+    for (const auto& b : blocks)
     {
-        const auto& b = blocks[k];
-        // 依次拼入，保持顺序一致
         for (int i = 0; i < 4; ++i) 
         {
             L.push_back(b.lidar_pts[i]);
             C.push_back(b.qr_pts[i]);
         }
     }
-    if (L.size() != 12 || C.size() != 12) {
-        ROS_ERROR("Merged pairs not equal to 12 (L=%zu, C=%zu).", L.size(), C.size());
+    if (L.size() != C.size() || L.size() < 12 || (L.size() % 4) != 0) {
+        ROS_ERROR("Merged pairs are invalid (L=%zu, C=%zu).", L.size(), C.size());
         return 1;
     }
 

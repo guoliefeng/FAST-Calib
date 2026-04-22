@@ -47,7 +47,7 @@ int main(int argc, char **argv)
             break;
 
         case LiDARType::Mech:
-            lidarDetectPtr->detect_mech_lidar(cloud_input, lidar_center_cloud);
+            lidarDetectPtr->detect_mech_lidar(cloud_input, lidar_center_cloud, qr_center_cloud);
             break;
 
         default:

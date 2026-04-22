@@ -31,14 +31,14 @@
 
   # multi-scene
  # Camera intrinsics
-  fx: 1030.06731324
-  fy: 1030.51267838
-  cx: 965.00523357
-  cy: 527.49974735
-  k1: -0.3319521991
-  k2: 0.0867648655
-  p1: 0.0008438102
-  p2: -0.0006867438
+  fx: 1037.72921
+  fy: 1034.2894
+  cx: 994.74842
+  cy: 551.39056
+  k1: -0.312007
+  k2: 0.067521
+  p1: -0.000809
+  p2: -0.003917
 
 # Calibration target parameters
   marker_size: 0.20 # ArUco marker size (our test data uses 0.16m; adjust to match your marker size)
@@ -56,61 +56,34 @@
   # z_min: 0.0 # avia and mid360: -0.5 ouster: -0.8
   # z_max: 2.0
 
-# multi_scene_11
-  # x_min: 2.0
-  # x_max: 5.0
-  # y_min: -1.0
-  # y_max: 1.0
-  # z_min: 0.0
-  # z_max: 2.0
-# multi_scene_22
-  # x_min: 2.0
-  # x_max: 5.0
-  # y_min: -4.0
-  # y_max: 1.0
-  # z_min: 0.0
-  # z_max: 2.0
-# multi_scene_33
-  # # 1 组
-  x_min: -2
-  x_max: 2
-  y_min: -2
-  y_max: 2
-  z_min: 1.45
-  z_max: 2.50
-    # 2 组
-  # x_min: -1.5
-  # x_max: 1.2
-  # y_min: -1
-  # y_max: 2
-  # z_min: 0
-  # z_max: 2
-  # 2 组  效果不好，这组场景的板子姿态更斜，导致孔边界点太差。
-  # x_min: -1.25
-  # x_max: 0.95
-  # y_min: -0.95
-  # y_max: 1.45
-  # z_min: 1.40
-  # z_max: 2.50
-  # 3 组
-  # x_min: -0.95
-  # x_max: 1.15
-  # y_min: -0.40
-  # y_max: 1.75
-  # z_min: 1.95
-  # z_max: 3.35
-  # 4 组
-  # x_min: -1
-  # x_max: 1
-  # y_min: -2
-  # y_max: 2
-  # z_min: 2.3
-  # z_max: 4
+# Hesai group 2
+  # x_min: 2.00
+  # x_max: 4.00
+  # y_min: -3.00
+  # y_max: 1.50
+  # z_min: -1.00
+  # z_max: 1.00
+
+# Hesai group 3
+  # x_min: 2.10
+  # x_max: 2.75
+  # y_min: -1.95
+  # y_max: -1.25
+  # z_min: -0.30
+  # z_max: 0.45
+
+# Hesai group 4
+  x_min: 2.50
+  x_max: 2.90
+  y_min: -1.05
+  y_max: -0.30
+  z_min: -0.30
+  z_max: 0.45
 
 # Input
-  lidar_topic: "/velodyne_front" # /ouster/points /livox/lidar
-  bag_path: "$(find fast_calib)/calib_data/ariy/1.bag"
-  image_path: "$(find fast_calib)/calib_data/ariy/1.jpg"
+  lidar_topic: "/velodyne_first" # /ouster/points /livox/lidar
+  bag_path: "$(find fast_calib)/calib_data/hesai/4.bag"
+  image_path: "$(find fast_calib)/calib_data/hesai/4.jpg"
 
 # Output
-  output_path: "$(find fast_calib)/output/good/1"
+  output_path: "$(find fast_calib)/output/hesai/multi"

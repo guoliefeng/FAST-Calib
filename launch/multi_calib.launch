@@ -1,7 +1,9 @@
 <launch>
   <arg name="rviz" default="false"/>
+  <arg name="output_path" default="$(find fast_calib)/output/0421/front/multi"/>
 
-  <rosparam file="$(find fast_calib)/config/qr_params.yaml" command="load" subst_value="true"/>
+  <rosparam file="$(find fast_calib)/config/ariy.yaml" command="load" subst_value="true"/>
+  <param name="output_path" value="$(arg output_path)"/>
 
   <node pkg="fast_calib" type="multi_fast_calib" name="multi_fast_calib" output="screen">
   </node>
