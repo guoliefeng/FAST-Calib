@@ -66,6 +66,15 @@ int main(int argc, char **argv)
     // 保存中间结果：排序后的 LiDAR 圆心和 QR 圆心
     saveTargetHoleCenters(lidar_centers, qr_centers, params);
 
+    if (lidar_centers->size() != TARGET_NUM_CIRCLES || qr_centers->size() != TARGET_NUM_CIRCLES)
+    {
+        std::cerr << BOLDRED
+                  << "[Main] Need 4 LiDAR centers and 4 QR centers before calibration, got lidar="
+                  << lidar_centers->size() << ", qr=" << qr_centers->size()
+                  << ". Skip SVD calibration." << RESET << std::endl;
+        return 1;
+    }
+
     // 计算外参
     Eigen::Matrix4f transformation;
     pcl::registration::TransformationEstimationSVD<pcl::PointXYZ, pcl::PointXYZ> svd;

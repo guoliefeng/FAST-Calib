@@ -691,12 +691,22 @@ public:
         pass_z.filter(*filtered_cloud_);
     
         ROS_INFO("Filtered cloud size: %zu", filtered_cloud_->size());
+        if (filtered_cloud_->empty())
+        {
+            ROS_WARN("[LiDAR] Filtered cloud is empty, skip solid LiDAR detection.");
+            return;
+        }
         
         pcl::VoxelGrid<Common::Point> voxel_filter;
         voxel_filter.setInputCloud(filtered_cloud_);
         voxel_filter.setLeafSize(0.005f, 0.005f, 0.005f);
         voxel_filter.filter(*filtered_cloud_);
         ROS_INFO("Filtered cloud size: %zu", filtered_cloud_->size());
+        if (filtered_cloud_->empty())
+        {
+            ROS_WARN("[LiDAR] Filtered cloud is empty after voxel filtering, skip solid LiDAR detection.");
+            return;
+        }
 
         // 2. 平面分割
         plane_cloud_->reserve(filtered_cloud_->size());
@@ -710,11 +720,22 @@ public:
         plane_segmentation.setInputCloud(filtered_cloud_);
         plane_segmentation.segment(*plane_inliers, *plane_coefficients);
     
+        if (plane_coefficients->values.size() < 4 || plane_inliers->indices.empty())
+        {
+            ROS_WARN("[LiDAR] Plane fitting failed, skip solid LiDAR detection.");
+            return;
+        }
+
         pcl::ExtractIndices<Common::Point> extract;
         extract.setInputCloud(filtered_cloud_);
         extract.setIndices(plane_inliers);
         extract.filter(*plane_cloud_);
         ROS_INFO("Plane cloud size: %zu", plane_cloud_->size());
+        if (plane_cloud_->empty())
+        {
+            ROS_WARN("[LiDAR] Plane cloud is empty, skip solid LiDAR detection.");
+            return;
+        }
     
         // 3. 平面点云对齐   
         aligned_cloud_->reserve(plane_cloud_->size());
@@ -808,6 +829,13 @@ public:
     
             if (inliers->indices.size() > 0) 
             {
+                if (coefficients->values.size() < 3)
+                {
+                    ROS_INFO("[LiDAR] Edge cluster %zu: size=%zu, inliers=%zu, invalid circle coefficients.",
+                             i, cluster->size(), inliers->indices.size());
+                    continue;
+                }
+
                 // 计算拟合误差
                 double error = 0.0;
                 for (const auto& idx : inliers->indices) 
@@ -818,6 +846,12 @@ public:
                     error += abs(distance);
                 }
                 error /= inliers->indices.size();
+                ROS_INFO("[LiDAR] Edge cluster %zu: size=%zu, inliers=%zu, fitted_radius=%.4f, radius_error=%.4f",
+                         i,
+                         cluster->size(),
+                         inliers->indices.size(),
+                         coefficients->values[2],
+                         error);
     
                 // 如果拟合误差较小，则认为是一个圆洞
                 if (error < 0.025) 

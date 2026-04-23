@@ -2,8 +2,33 @@
 <!-- Launch file for Livox AVIA LiDAR -->
 
 	<arg name="rviz" default="true" />
+	<arg name="config_file" default="$(find fast_calib)/config/hesai.yaml" />
+	<arg name="pointcloud_source" default="" />
+	<arg name="lidar_topic" default="" />
+	<arg name="bag_path" default="" />
+	<arg name="pcd_path" default="" />
+	<arg name="image_path" default="" />
+	<arg name="output_path" default="" />
+	<arg name="x_min" default="" />
+	<arg name="x_max" default="" />
+	<arg name="y_min" default="" />
+	<arg name="y_max" default="" />
+	<arg name="z_min" default="" />
+	<arg name="z_max" default="" />
 
-	<rosparam file="$(find fast_calib)/config/ariy.yaml" command="load" subst_value="true"/>
+	<rosparam file="$(arg config_file)" command="load" subst_value="true"/>
+	<param if="$(eval arg('pointcloud_source') != '')" name="pointcloud_source" value="$(arg pointcloud_source)" />
+	<param if="$(eval arg('lidar_topic') != '')" name="lidar_topic" value="$(arg lidar_topic)" />
+	<param if="$(eval arg('bag_path') != '')" name="bag_path" value="$(arg bag_path)" />
+	<param if="$(eval arg('pcd_path') != '')" name="pcd_path" value="$(arg pcd_path)" />
+	<param if="$(eval arg('image_path') != '')" name="image_path" value="$(arg image_path)" />
+	<param if="$(eval arg('output_path') != '')" name="output_path" value="$(arg output_path)" />
+	<param if="$(eval arg('x_min') != '')" name="x_min" value="$(arg x_min)" />
+	<param if="$(eval arg('x_max') != '')" name="x_max" value="$(arg x_max)" />
+	<param if="$(eval arg('y_min') != '')" name="y_min" value="$(arg y_min)" />
+	<param if="$(eval arg('y_max') != '')" name="y_max" value="$(arg y_max)" />
+	<param if="$(eval arg('z_min') != '')" name="z_min" value="$(arg z_min)" />
+	<param if="$(eval arg('z_max') != '')" name="z_max" value="$(arg z_max)" />
 
 	<node pkg="fast_calib" type="fast_calib" name="fast_calib" output="screen">
 	</node>

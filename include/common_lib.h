@@ -62,7 +62,9 @@ struct Params {
   double delta_width_circles, delta_height_circles, circle_radius;
   int min_detected_markers;
   string image_path;
+  string pointcloud_source;
   string bag_path;
+  string pcd_path;
   string lidar_topic;
   string output_path;
 };
@@ -86,7 +88,9 @@ Params loadParameters(ros::NodeHandle &nh) {
   nh.param("min_detected_markers", params.min_detected_markers, 3);
   nh.param("circle_radius", params.circle_radius, 0.12);
   nh.param("image_path", params.image_path, string("/home/chunran/calib_ws/src/fast_calib/data/image.png"));
+  nh.param("pointcloud_source", params.pointcloud_source, string("bag"));
   nh.param("bag_path", params.bag_path, string("/home/chunran/calib_ws/src/fast_calib/data/input.bag"));
+  nh.param("pcd_path", params.pcd_path, string(""));
   nh.param("lidar_topic", params.lidar_topic, string("/livox/lidar"));
   nh.param("output_path", params.output_path, string("/home/chunran/calib_ws/src/fast_calib/output"));
   nh.param("x_min", params.x_min, 1.5);

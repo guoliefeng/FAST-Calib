@@ -55,6 +55,12 @@
   # y_max: 3.0
   # z_min: 0.0 # avia and mid360: -0.5 ouster: -0.8
   # z_max: 2.0
+  # x_min: 1.22
+  # x_max: 2.12
+  # y_min: -3.45
+  # y_max: -1.81
+  # z_min: -1.00
+  # z_max: 0.33
 
 # Hesai group 2
   # x_min: 2.00
@@ -63,6 +69,12 @@
   # y_max: 1.50
   # z_min: -1.00
   # z_max: 1.00
+  # x_min: 1.23
+  # x_max: 2.12
+  # y_min: -3.45
+  # y_max: -1.83
+  # z_min: -0.99
+  # z_max: 0.33
 
 # Hesai group 3
   # x_min: 2.10
@@ -71,19 +83,31 @@
   # y_max: -1.25
   # z_min: -0.30
   # z_max: 0.45
-
+  # x_min: 1.15
+  # x_max: 2.73
+  # y_min: -4.65
+  # y_max: -3.61
+  # z_min: -1.23
+  # z_max: 0.22
 # Hesai group 4
-  x_min: 2.50
+  # x_min: 2.50
+  # x_max: 2.90
+  # y_min: -1.05
+  # y_max: -0.30
+  # z_min: -0.30
+  # z_max: 0.45
+  x_min: -2
   x_max: 2.90
-  y_min: -1.05
-  y_max: -0.30
-  z_min: -0.30
-  z_max: 0.45
-
+  y_min: -3
+  y_max: 2
+  z_min: -2
+  z_max: 2
 # Input
-  lidar_topic: "/velodyne_first" # /ouster/points /livox/lidar
+  pointcloud_source: "bag" # "bag" or "pcd"
+  lidar_topic: "/velodyne_first" # Used only when pointcloud_source is "bag"
   bag_path: "$(find fast_calib)/calib_data/hesai/4.bag"
+  pcd_path: "/home/glf/dataDisk/calib/data_221/3.pcd"
   image_path: "$(find fast_calib)/calib_data/hesai/4.jpg"
 
 # Output
-  output_path: "$(find fast_calib)/output/hesai/multi"
+  output_path: "$(find fast_calib)/output/data_221/3"

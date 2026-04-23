@@ -135,8 +135,10 @@
   z_min: 1.56
   z_max: 2.27
 # Input
+  pointcloud_source: "bag" # "bag" or "pcd"
   lidar_topic: "/velodyne_front" # /ouster/points /livox/lidar
   bag_path: "$(find fast_calib)/calib_data/0421/front/9.bag"
+  pcd_path: "$(find fast_calib)/calib_data/0421/front/9.pcd"
   image_path: "$(find fast_calib)/calib_data/0421/front/9.jpg"
 
 # Output
