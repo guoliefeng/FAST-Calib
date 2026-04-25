@@ -43,3 +43,8 @@ target_link_libraries(multi_fast_calib
   ${PCL_LIBRARIES}
   ${OpenCV_LIBRARIES}
 )
+
+catkin_install_python(PROGRAMS
+  scripts/batch_calib.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)

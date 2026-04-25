@@ -2,13 +2,14 @@
 <!-- Launch file for Livox AVIA LiDAR -->
 
 	<arg name="rviz" default="true" />
-	<arg name="config_file" default="$(find fast_calib)/config/hesai.yaml" />
+	<arg name="config_file" default="$(find fast_calib)/config/hesai0425.yaml" />
 	<arg name="pointcloud_source" default="" />
 	<arg name="lidar_topic" default="" />
 	<arg name="bag_path" default="" />
 	<arg name="pcd_path" default="" />
 	<arg name="image_path" default="" />
 	<arg name="output_path" default="" />
+	<arg name="exit_after_save" default="false" />
 	<arg name="x_min" default="" />
 	<arg name="x_max" default="" />
 	<arg name="y_min" default="" />
@@ -23,6 +24,7 @@
 	<param if="$(eval arg('pcd_path') != '')" name="pcd_path" value="$(arg pcd_path)" />
 	<param if="$(eval arg('image_path') != '')" name="image_path" value="$(arg image_path)" />
 	<param if="$(eval arg('output_path') != '')" name="output_path" value="$(arg output_path)" />
+	<param name="exit_after_save" value="$(arg exit_after_save)" />
 	<param if="$(eval arg('x_min') != '')" name="x_min" value="$(arg x_min)" />
 	<param if="$(eval arg('x_max') != '')" name="x_max" value="$(arg x_max)" />
 	<param if="$(eval arg('y_min') != '')" name="y_min" value="$(arg y_min)" />

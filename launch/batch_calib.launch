@@ -1,0 +1,59 @@
+<launch>
+  <arg name="config_file" default="$(find fast_calib)/config/hesai0425_rearr.yaml"/>
+  <arg name="data_dir" default=""/>
+  <arg name="output_path" default=""/>
+  <arg name="groups" default=""/>
+  <arg name="use_config_groups" default=""/>
+  <arg name="pointcloud_source" default=""/>
+  <arg name="pointcloud_sources" default=""/>
+  <arg name="run_multi" default=""/>
+  <arg name="multi_mode" default=""/>
+  <arg name="multi_min_groups" default=""/>
+  <arg name="max_single_rmse" default=""/>
+  <arg name="continue_on_error" default=""/>
+  <arg name="pcd_prefer_group_dir" default=""/>
+  <arg name="lidar_topic" default=""/>
+  <arg name="use_config_rois" default=""/>
+  <arg name="group_layout" default=""/>
+  <arg name="group_dir_prefix" default=""/>
+  <arg name="bag_name" default=""/>
+  <arg name="image_name" default=""/>
+  <arg name="pcd_name" default=""/>
+  <arg name="x_min" default=""/>
+  <arg name="x_max" default=""/>
+  <arg name="y_min" default=""/>
+  <arg name="y_max" default=""/>
+  <arg name="z_min" default=""/>
+  <arg name="z_max" default=""/>
+
+  <rosparam file="$(arg config_file)" command="load" subst_value="true"/>
+
+  <node pkg="fast_calib" type="batch_calib.py" name="batch_fast_calib" output="screen" clear_params="true">
+    <param name="config_file" value="$(arg config_file)"/>
+    <param if="$(eval arg('data_dir') != '')" name="data_dir" value="$(arg data_dir)"/>
+    <param if="$(eval arg('output_path') != '')" name="output_path" value="$(arg output_path)"/>
+    <param if="$(eval arg('groups') != '')" name="groups" value="$(arg groups)"/>
+    <param if="$(eval arg('use_config_groups') != '')" name="use_config_groups" value="$(arg use_config_groups)"/>
+    <param if="$(eval arg('pointcloud_source') != '')" name="pointcloud_source" value="$(arg pointcloud_source)"/>
+    <param if="$(eval arg('pointcloud_sources') != '')" name="pointcloud_sources" value="$(arg pointcloud_sources)"/>
+    <param if="$(eval arg('run_multi') != '')" name="run_multi" value="$(arg run_multi)"/>
+    <param if="$(eval arg('multi_mode') != '')" name="multi_mode" value="$(arg multi_mode)"/>
+    <param if="$(eval arg('multi_min_groups') != '')" name="multi_min_groups" value="$(arg multi_min_groups)"/>
+    <param if="$(eval arg('max_single_rmse') != '')" name="max_single_rmse" value="$(arg max_single_rmse)"/>
+    <param if="$(eval arg('continue_on_error') != '')" name="continue_on_error" value="$(arg continue_on_error)"/>
+    <param if="$(eval arg('pcd_prefer_group_dir') != '')" name="pcd_prefer_group_dir" value="$(arg pcd_prefer_group_dir)"/>
+    <param if="$(eval arg('lidar_topic') != '')" name="lidar_topic" value="$(arg lidar_topic)"/>
+    <param if="$(eval arg('use_config_rois') != '')" name="use_config_rois" value="$(arg use_config_rois)"/>
+    <param if="$(eval arg('group_layout') != '')" name="group_layout" value="$(arg group_layout)"/>
+    <param if="$(eval arg('group_dir_prefix') != '')" name="group_dir_prefix" value="$(arg group_dir_prefix)"/>
+    <param if="$(eval arg('bag_name') != '')" name="bag_name" value="$(arg bag_name)"/>
+    <param if="$(eval arg('image_name') != '')" name="image_name" value="$(arg image_name)"/>
+    <param if="$(eval arg('pcd_name') != '')" name="pcd_name" value="$(arg pcd_name)"/>
+    <param if="$(eval arg('x_min') != '')" name="x_min" value="$(arg x_min)"/>
+    <param if="$(eval arg('x_max') != '')" name="x_max" value="$(arg x_max)"/>
+    <param if="$(eval arg('y_min') != '')" name="y_min" value="$(arg y_min)"/>
+    <param if="$(eval arg('y_max') != '')" name="y_max" value="$(arg y_max)"/>
+    <param if="$(eval arg('z_min') != '')" name="z_min" value="$(arg z_min)"/>
+    <param if="$(eval arg('z_max') != '')" name="z_max" value="$(arg z_max)"/>
+  </node>
+</launch>

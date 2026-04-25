@@ -94,6 +94,18 @@ def project_points(points_lidar, Rcl, Pcl, K, dist, image_shape, min_depth, max_
     return ui[inside], vi[inside], z[inside]
 
 
+def undistort_image_for_projection(image, K, dist, alpha, camera_matrix_mode):
+    h, w = image.shape[:2]
+    dist_cv = np.asarray(dist, dtype=np.float64).reshape(1, -1)
+    if camera_matrix_mode == "original":
+        new_K = K.copy()
+    else:
+        new_K, _ = cv2.getOptimalNewCameraMatrix(K, dist_cv, (w, h), alpha, (w, h))
+    undistorted = cv2.undistort(image, K, dist_cv, None, new_K)
+    zero_dist = np.zeros_like(dist, dtype=np.float64)
+    return undistorted, new_K, zero_dist
+
+
 def depth_colors(depth):
     if depth.size == 0:
         return np.empty((0, 3), dtype=np.uint8)
@@ -212,6 +224,23 @@ def main():
     parser.add_argument("--radius", type=int, default=1)
     parser.add_argument("--alpha", type=float, default=0.82)
     parser.add_argument("--max-points", type=int, default=350000)
+    parser.add_argument(
+        "--undistort",
+        action="store_true",
+        help="Undistort each image first, then project points with the new camera matrix and zero distortion.",
+    )
+    parser.add_argument(
+        "--undistort-alpha",
+        type=float,
+        default=0.0,
+        help="Alpha passed to cv2.getOptimalNewCameraMatrix when --undistort is used. 0 crops invalid pixels, 1 keeps full FOV.",
+    )
+    parser.add_argument(
+        "--undistort-camera-matrix",
+        choices=["optimal", "original"],
+        default="optimal",
+        help="Camera matrix used for the undistorted image. 'original' keeps fx/fy/cx/cy from the config.",
+    )
     parser.add_argument("--no-crops", action="store_true")
     parser.add_argument("--no-grid", action="store_true")
     args = parser.parse_args()
@@ -242,19 +271,30 @@ def main():
         if image is None:
             raise RuntimeError(f"Cannot read image: {image_path}")
 
+        project_image = image
+        project_K = K
+        project_dist = dist
+        if args.undistort:
+            project_image, project_K, project_dist = undistort_image_for_projection(
+                image, K, dist, args.undistort_alpha, args.undistort_camera_matrix
+            )
+
         print(f"[Group {group}] reading {bag_path}")
         points = read_bag_points(str(bag_path), topic)
-        u, v, depth = project_points(points, Rcl, Pcl, K, dist, image.shape, args.min_depth, args.max_depth)
-        projected = draw_projection(image, u, v, depth, alpha=args.alpha, radius=args.radius, max_points=args.max_points)
+        u, v, depth = project_points(
+            points, Rcl, Pcl, project_K, project_dist, project_image.shape, args.min_depth, args.max_depth
+        )
+        projected = draw_projection(project_image, u, v, depth, alpha=args.alpha, radius=args.radius, max_points=args.max_points)
 
-        out_path = out_dir / f"hesai_{group}_projected_multi.png"
+        suffix = "_undistorted" if args.undistort else ""
+        out_path = out_dir / f"hesai_{group}_projected_multi{suffix}.png"
         cv2.imwrite(str(out_path), projected)
         written.append(out_path)
         if not args.no_crops:
-            bbox = target_crop_bbox(image)
+            bbox = target_crop_bbox(project_image)
             if bbox:
                 x0, y0, x1, y1 = bbox
-                crop_path = out_dir / f"hesai_{group}_projected_multi_crop.png"
+                crop_path = out_dir / f"hesai_{group}_projected_multi{suffix}_crop.png"
                 cv2.imwrite(str(crop_path), projected[y0:y1, x0:x1])
                 written_crops.append(crop_path)
         print(f"[Group {group}] points={points.shape[0]} visible={u.size} saved={out_path}")

@@ -99,6 +99,10 @@ int main(int argc, char **argv)
     projectPointCloudToImage(cloud_input, transformation, qrDetectPtr->cameraMatrix_, qrDetectPtr->distCoeffs_, img_input, colored_cloud);
 
     saveCalibrationResults(params, transformation, colored_cloud, qrDetectPtr->imageCopy_);
+    if (params.exit_after_save)
+    {
+      return 0;
+    }
 
     ros::Publisher colored_cloud_pub = nh.advertise<sensor_msgs::PointCloud2>("colored_cloud", 1);
     ros::Publisher aligned_lidar_centers_pub = nh.advertise<sensor_msgs::PointCloud2>("aligned_lidar_centers", 1);

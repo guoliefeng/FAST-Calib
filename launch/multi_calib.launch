@@ -1,8 +1,9 @@
 <launch>
   <arg name="rviz" default="false"/>
-  <arg name="output_path" default="$(find fast_calib)/output/0421/front/multi"/>
+  <arg name="config_file" default="$(find fast_calib)/config/hesai.yaml"/>
+  <arg name="output_path" default="$(find fast_calib)/output/0424/batch_221/bag/multi_good_134"/>
 
-  <rosparam file="$(find fast_calib)/config/ariy.yaml" command="load" subst_value="true"/>
+  <rosparam file="$(arg config_file)" command="load" subst_value="true"/>
   <param name="output_path" value="$(arg output_path)"/>
 
   <node pkg="fast_calib" type="multi_fast_calib" name="multi_fast_calib" output="screen">

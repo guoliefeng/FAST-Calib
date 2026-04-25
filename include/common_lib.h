@@ -67,6 +67,7 @@ struct Params {
   string pcd_path;
   string lidar_topic;
   string output_path;
+  bool exit_after_save;
 };
 
 // 读取参数
@@ -93,6 +94,7 @@ Params loadParameters(ros::NodeHandle &nh) {
   nh.param("pcd_path", params.pcd_path, string(""));
   nh.param("lidar_topic", params.lidar_topic, string("/livox/lidar"));
   nh.param("output_path", params.output_path, string("/home/chunran/calib_ws/src/fast_calib/output"));
+  nh.param("exit_after_save", params.exit_after_save, false);
   nh.param("x_min", params.x_min, 1.5);
   nh.param("x_max", params.x_max, 3.0);
   nh.param("y_min", params.y_min, -1.5);

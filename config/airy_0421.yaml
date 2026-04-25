@@ -129,3 +129,82 @@
 
 # Output
   output_path: "$(find fast_calib)/output/0424/batch_airy/1"
+
+# Batch calibration for calib_data/0421/front.
+  batch_calib:
+    data_dir: "$(find fast_calib)/calib_data/0421/front"
+    output_path: "$(find fast_calib)/output/0421/front/batch"
+    groups: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    pointcloud_source: "bag" # "bag", "pcd", or "both"
+    pointcloud_sources: ["bag"]
+    lidar_topic: "/velodyne_front"
+    pcd_prefer_group_dir: true
+    continue_on_error: true
+    max_single_rmse: 0.05
+    run_multi: true
+    multi_mode: "best"
+    multi_min_groups: 3
+    rois:
+      "1":
+        x_min: -0.55
+        x_max: 1.45
+        y_min: 0.30
+        y_max: 2.50
+        z_min: 2.65
+        z_max: 3.40
+      "2":
+        x_min: -0.45
+        x_max: 1.40
+        y_min: 0.35
+        y_max: 2.45
+        z_min: 2.70
+        z_max: 3.50
+      "3":
+        x_min: -0.45
+        x_max: 1.21
+        y_min: 0.35
+        y_max: 2.09
+        z_min: 1.85
+        z_max: 3.27
+      "4":
+        x_min: -0.45
+        x_max: 1.21
+        y_min: 0.35
+        y_max: 2.09
+        z_min: 1.85
+        z_max: 3.27
+      "5":
+        x_min: -0.86
+        x_max: 0.92
+        y_min: -0.20
+        y_max: 1.85
+        z_min: 1.18
+        z_max: 2.12
+      "6":
+        x_min: -1.94
+        x_max: -0.15
+        y_min: -1.90
+        y_max: -0.14
+        z_min: 1.42
+        z_max: 2.61
+      "7":
+        x_min: -1.66
+        x_max: 0.19
+        y_min: -1.60
+        y_max: 0.44
+        z_min: 2.24
+        z_max: 2.80
+      "8":
+        x_min: -1.77
+        x_max: 0.10
+        y_min: -1.50
+        y_max: 0.34
+        z_min: 1.21
+        z_max: 2.70
+      "9":
+        x_min: -1.31
+        x_max: 0.64
+        y_min: -0.82
+        y_max: 1.28
+        z_min: 1.56
+        z_max: 2.27
