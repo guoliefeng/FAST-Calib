@@ -8,7 +8,7 @@ Usage:
   source /home/glf/dataDisk/calib/FAST-Calib_ws/devel/setup.bash
   python3 calib_pipeline.py --job job_rear_right.yaml --stage all
 """
-import argparse, csv, math, re, subprocess
+import argparse, csv, itertools, math, re, shutil, subprocess
 from pathlib import Path
 from collections import defaultdict, deque
 import numpy as np
@@ -41,8 +41,23 @@ def write_yaml(p, obj):
     with Path(p).open("w", encoding="utf-8") as f:
         yaml.safe_dump(obj, f, allow_unicode=True, sort_keys=False)
 
-def resolve_path(s, base=None):
+def normalize_roi_yaml(data):
+    if not isinstance(data, dict):
+        return {"batch_calib": {"default_roi": {}, "rois": {}}}
+    if "batch_calib" in data:
+        batch = data.get("batch_calib") or {}
+        return {"batch_calib": {
+            "default_roi": batch.get("default_roi", {}),
+            "rois": batch.get("rois", {}),
+        }}
+    return {"batch_calib": {
+        "default_roi": data.get("default_roi", data.get("unified_roi", {})),
+        "rois": data.get("rois", data.get("groups", {})),
+    }}
+
+def resolve_path(s, base=None, output_dir=None):
     s = str(s).replace("${data_dir}", str(base) if base else "")
+    s = s.replace("${output_dir}", str(output_dir) if output_dir else "")
     p = Path(s).expanduser()
     if base and s and not p.is_absolute(): p = Path(base) / p
     return p.resolve()
@@ -70,16 +85,21 @@ def scan_groups(job):
     image_name = layout.get("image_name", "img_0001.jpg")
     pcd_name = layout.get("pcd_name", "1.pcd")
     board_name = layout.get("board_pcd_name", "board_candidate.pcd")
+    board_template = layout.get("board_pcd_template", "")
     groups = []
     for d in sorted(data_dir.glob(f"{prefix}*"), key=natural_key):
         if not d.is_dir(): continue
+        board_pcd = d / board_name
+        if board_template:
+            rel = board_template.replace("${group}", d.name).replace("{group}", d.name)
+            board_pcd = resolve_path(rel, data_dir, out)
         groups.append({
             "group": d.name,
             "dir": str(d),
             "bag": str(d / bag_name),
             "image": str(d / image_name),
             "pcd": str(d / pcd_name),
-            "board_pcd": str(d / board_name),
+            "board_pcd": str(board_pcd),
         })
     if not groups: raise RuntimeError(f"No group dirs found: {data_dir}/{prefix}*")
     path = mkdir(out) / "00_manifest.csv"
@@ -301,8 +321,18 @@ def make_box(rmin, rmax, n=80):
 
 def stage_roi(job, groups):
     roi_cfg = job.get("roi", {})
-    if not boolv(roi_cfg.get("enabled", True), True): return
     _, out = job_paths(job); roi_dir = mkdir(out/"02_roi"); dbg=mkdir(roi_dir/"debug")
+    existing = roi_cfg.get("existing_file", "")
+    if not boolv(roi_cfg.get("enabled", True), True):
+        if not existing:
+            raise RuntimeError("ROI stage disabled but roi.existing_file is empty")
+        src = resolve_path(existing, job_paths(job)[0], out)
+        if not src.exists():
+            raise RuntimeError(f"ROI file does not exist: {src}")
+        dst = roi_dir / "roi_groups.yaml"
+        write_yaml(dst, normalize_roi_yaml(load_yaml(src)))
+        print(f"[roi] using existing ROI file: {src} -> {dst}")
+        return
     coarse = roi_cfg["coarse"]; pad = roi_cfg.get("padding", {"x":0.15,"y":0.15,"z":0.15}); qs=roi_cfg.get("robust_quantile", [0.5,99.5])
     rows=[]; rois={}; mins=[]; maxs=[]
     for g in groups:
@@ -322,7 +352,8 @@ def stage_roi(job, groups):
     fields=sorted(set(k for r in rows for k in r.keys()))
     with (roi_dir/"roi_summary.csv").open("w",encoding="utf-8",newline="") as f:
         w=csv.DictWriter(f,fieldnames=fields); w.writeheader(); w.writerows(rows)
-    if not mins: raise RuntimeError("all ROI detections failed")
+    if not mins:
+        raise RuntimeError("all ROI detections failed; adjust roi.coarse or set roi.enabled=false and roi.existing_file")
     umin=np.vstack(mins).min(axis=0); umax=np.vstack(maxs).max(axis=0)
     unified={"x_min":ff(umin[0]),"x_max":ff(umax[0]),"y_min":ff(umin[1]),"y_max":ff(umax[1]),"z_min":ff(umin[2]),"z_max":ff(umax[2])}
     write_yaml(roi_dir/"roi_groups.yaml", {"batch_calib":{"default_roi":unified,"rois":rois}})
@@ -333,11 +364,18 @@ def stage_roi(job, groups):
 # calibrate and multi-SVD
 # -----------------------------------------------------------------------------
 def roi_for_group(data, group):
-    b=data.get("batch_calib",data); return b.get("rois",{}).get(group,b.get("default_roi"))
+    b=normalize_roi_yaml(data).get("batch_calib",{})
+    return b.get("rois",{}).get(group,b.get("default_roi"))
 
 def run_calib(job, g, roi, out_dir):
     fc=job["fast_calib"]; source=fc.get("pointcloud_source","pcd"); cloud=Path(g["pcd"] if source=="pcd" else g["bag"]); img=Path(g["image"]); mkdir(out_dir)
+    for stale in ("circle_center_record.txt", "single_calib_result.txt", "colored_cloud.pcd", "run.log"):
+        p = out_dir / stale
+        if p.exists():
+            p.unlink()
     cmd=["roslaunch",fc.get("package","fast_calib"),fc.get("calib_launch","calib.launch"),"rviz:=false",f"config_file:={fc['config_file']}",f"pointcloud_source:={source}",f"image_path:={img}",f"output_path:={out_dir}","exit_after_save:=true",f"x_min:={roi['x_min']}",f"x_max:={roi['x_max']}",f"y_min:={roi['y_min']}",f"y_max:={roi['y_max']}",f"z_min:={roi['z_min']}",f"z_max:={roi['z_max']}"]
+    if source == "bag" and fc.get("lidar_topic"):
+        cmd.append(f"lidar_topic:={fc['lidar_topic']}")
     cmd.append(("pcd_path:=" if source=="pcd" else "bag_path:=") + str(cloud))
     proc=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
     log=strip_ansi(proc.stdout); (out_dir/"run.log").write_text(log,encoding="utf-8")
@@ -360,7 +398,7 @@ def parse_centers(line):
 def read_record(path):
     if not Path(path).exists(): return None,None
     lines=Path(path).read_text(encoding="utf-8").splitlines()
-    lidar=parse_centers(next((l for l in lines if l.startswith("lidar_centers:")),"")); cam=parse_centers(next((l for l in lines if l.startswith("qr_centers:")),""))
+    lidar=parse_centers(next((l for l in reversed(lines) if l.startswith("lidar_centers:")),"")); cam=parse_centers(next((l for l in reversed(lines) if l.startswith("qr_centers:")),""))
     if lidar.shape!=(4,3) or cam.shape!=(4,3): return None,None
     return lidar,cam
 
@@ -375,9 +413,42 @@ def eval_groups(records, gs):
         aa,bb=records[g]; pred=(R@aa.T).T+t; per[g]=float(np.sqrt(np.mean(np.linalg.norm(pred-bb,axis=1)**2)))
     return R,t,rmse,per
 
+def choose_multi(records, min_groups, max_multi, mode):
+    groups=list(records.keys())
+    if len(groups)<min_groups:
+        return None, [], []
+    candidates=[]
+    if mode in ("max_groups", "best", "exhaustive"):
+        for size in range(min_groups, len(groups)+1):
+            best=None
+            for combo in itertools.combinations(groups, size):
+                R,t,rmse,per=eval_groups(records, combo)
+                item={"groups":list(combo),"rmse":rmse,"per_group":per,"R":R,"t":t}
+                if best is None or rmse < best["rmse"]:
+                    best=item
+            if best is not None:
+                candidates.append(best)
+        valid=[c for c in candidates if c["rmse"] <= max_multi]
+        if valid:
+            if mode == "best":
+                selected=min(valid, key=lambda c: (c["rmse"], -len(c["groups"])))
+            else:
+                selected=max(valid, key=lambda c: (len(c["groups"]), -c["rmse"]))
+            return selected, candidates, []
+        fallback=min(candidates, key=lambda c: (c["rmse"], -len(c["groups"]))) if candidates else None
+        return fallback, candidates, []
+
+    cur=list(groups); history=[]
+    while len(cur)>=min_groups:
+        R,t,rmse,per=eval_groups(records,cur); history.append({"groups":list(cur),"rmse":rmse,"per_group":per,"R":R,"t":t})
+        if rmse<=max_multi:
+            return history[-1], [], history
+        cur=[g for g in cur if g!=max(per,key=per.get)]
+    return None, [], history
+
 def stage_calibrate(job, groups):
     _, out=job_paths(job); single=mkdir(out/"03_single"); multi=mkdir(out/"04_multi"); roi_data=load_yaml(out/"02_roi"/"roi_groups.yaml"); fc=job["fast_calib"]
-    max_single=float(fc.get("max_single_rmse",0.03)); max_multi=float(fc.get("max_multi_rmse",0.03)); min_groups=int(fc.get("multi_min_groups",3))
+    max_single=float(fc.get("max_single_rmse",0.03)); max_multi=float(fc.get("max_multi_rmse",0.03)); min_groups=int(fc.get("multi_min_groups",3)); multi_mode=str(fc.get("multi_mode","max_groups"))
     rows=[]; records={}
     for g in groups:
         roi=roi_for_group(roi_data,g["group"])
@@ -388,15 +459,29 @@ def stage_calibrate(job, groups):
         if r.get("ok") and a is not None: records[g["group"]]=(a,b)
     fields=sorted(set(k for r in rows for k in r.keys()))
     with (out/"batch_summary.csv").open("w",encoding="utf-8",newline="") as f: w=csv.DictWriter(f,fieldnames=fields); w.writeheader(); w.writerows(rows)
-    cur=list(records.keys()); history=[]
-    while len(cur)>=min_groups:
-        R,t,rmse,per=eval_groups(records,cur); history.append({"groups":list(cur),"rmse":ff(rmse),"per_group":{k:ff(v) for k,v in per.items()}})
-        if rmse<=max_multi: break
-        cur=[g for g in cur if g!=max(per,key=per.get)]
-    if len(cur)<min_groups: write_yaml(multi/"multi_result.yaml",{"status":"failed","reason":"not_enough_groups","good_groups":list(records.keys())}); return
-    R,t,rmse,per=eval_groups(records,cur); T=np.eye(4); T[:3,:3]=R; T[:3,3]=t
-    result={"status":"ok" if rmse<=max_multi else "warn","rmse":ff(rmse),"selected_groups":cur,"T_cam_lidar":[[ff(x) for x in row] for row in T.tolist()],"Rcl":[[ff(x) for x in row] for row in R.tolist()],"Pcl":[ff(x) for x in t.tolist()],"history":history}
+    selected,candidates,history_raw=choose_multi(records,min_groups,max_multi,multi_mode)
+    if selected is None:
+        write_yaml(multi/"multi_result.yaml",{"status":"failed","reason":"not_enough_groups","good_groups":list(records.keys())})
+        return
+    cur=selected["groups"]; R=selected["R"]; t=selected["t"]; rmse=selected["rmse"]; per=selected["per_group"]
+    history=[
+        {"groups":c["groups"],"rmse":ff(c["rmse"]),"per_group":{k:ff(v) for k,v in c["per_group"].items()}}
+        for c in (candidates if candidates else history_raw)
+    ]
+    if candidates:
+        with (multi/"multi_candidates.csv").open("w",encoding="utf-8",newline="") as f:
+            w=csv.DictWriter(f,fieldnames=["group_count","rmse","groups"]); w.writeheader()
+            for c in candidates:
+                w.writerow({"group_count":len(c["groups"]),"rmse":f"{c['rmse']:.6f}","groups":" ".join(c["groups"])})
+    T=np.eye(4); T[:3,:3]=R; T[:3,3]=t
+    result={"status":"ok" if rmse<=max_multi else "warn","rmse":ff(rmse),"selection_mode":multi_mode,"max_multi_rmse":ff(max_multi),"selected_groups":cur,"T_cam_lidar":[[ff(x) for x in row] for row in T.tolist()],"Rcl":[[ff(x) for x in row] for row in R.tolist()],"Pcl":[ff(x) for x in t.tolist()],"history":history}
     write_yaml(multi/"multi_result.yaml",result); write_yaml(out/"final_extrinsic.yaml",result); (multi/"selected_groups.txt").write_text("\n".join(cur)+"\n",encoding="utf-8")
+    with (multi/"multi_calib_result.txt").open("w", encoding="utf-8") as f:
+        f.write("# FAST-LIVO2 calibration format\n")
+        f.write("Rcl: [ " + ", ".join(f"{x: .6f}" for x in R[0]) + ",\n")
+        f.write("       " + ", ".join(f"{x: .6f}" for x in R[1]) + ",\n")
+        f.write("       " + ", ".join(f"{x: .6f}" for x in R[2]) + "]\n")
+        f.write("Pcl: [ " + ", ".join(f"{x: .6f}" for x in t) + "]\n")
     print(f"[multi] selected={cur} rmse={rmse:.6f}")
 
 # -----------------------------------------------------------------------------
@@ -411,7 +496,7 @@ def stage_verify(job, groups):
     import cv2
     _,out=job_paths(job); verify=mkdir(out/"05_verify"); final=load_yaml(out/"final_extrinsic.yaml"); T=np.asarray(final["T_cam_lidar"],dtype=float); selected=set(final.get("selected_groups",[]))
     fx,fy,cx,cy,k1,k2,p1,p2,k3=camera_from_config(job["fast_calib"]["config_file"]); K=np.array([[fx,0,cx],[0,fy,cy],[0,0,1]],dtype=float); D=np.array([k1,k2,p1,p2,k3],dtype=float)
-    rows=[]
+    rows=[]; written=[]
     for g in groups:
         if selected and g["group"] not in selected and not boolv(job.get("verify",{}).get("all_groups",False),False): continue
         img=cv2.imread(g["image"]); bp=Path(g["board_pcd"])
@@ -420,9 +505,26 @@ def stage_verify(job, groups):
         if pc.shape[0]==0: continue
         uv,_=cv2.projectPoints(pc.reshape(-1,1,3),np.zeros((3,1)),np.zeros((3,1)),K,D); uv=uv.reshape(-1,2); h,w=img.shape[:2]; m=(uv[:,0]>=0)&(uv[:,0]<w)&(uv[:,1]>=0)&(uv[:,1]<h); uv=uv[m]
         for u,v in uv: cv2.circle(img,(int(round(u)),int(round(v))),int(job.get("verify",{}).get("point_radius",2)),(0,0,255),-1)
-        outimg=verify/f"{g['group']}_board_overlay.png"; cv2.imwrite(str(outimg),img); rows.append({"group":g["group"],"points_projected":uv.shape[0],"overlay":str(outimg)})
+        outimg=verify/f"{g['group']}_board_overlay.png"; cv2.imwrite(str(outimg),img); written.append(outimg); rows.append({"group":g["group"],"points_projected":uv.shape[0],"overlay":str(outimg)})
         print(f"[verify] {g['group']} projected={uv.shape[0]}")
     with (verify/"verify_summary.csv").open("w",encoding="utf-8",newline="") as f: w=csv.DictWriter(f,fieldnames=["group","points_projected","overlay"]); w.writeheader(); w.writerows(rows)
+    if written:
+        thumbs=[]; cols=int(job.get("verify",{}).get("grid_cols",5))
+        for p in written:
+            im=cv2.imread(str(p))
+            if im is None: continue
+            tw=480; scale=tw/im.shape[1]
+            thumbs.append(cv2.resize(im,(tw,int(im.shape[0]*scale)),interpolation=cv2.INTER_AREA))
+        if thumbs:
+            h=max(t.shape[0] for t in thumbs); w=max(t.shape[1] for t in thumbs); blank=np.zeros((h,w,3),dtype=np.uint8); rows_img=[]
+            for i in range(0,len(thumbs),cols):
+                cells=[]
+                for t in thumbs[i:i+cols]:
+                    cell=blank.copy(); cell[:t.shape[0],:t.shape[1]]=t; cells.append(cell)
+                while len(cells)<cols: cells.append(blank.copy())
+                rows_img.append(np.hstack(cells))
+            grid=np.vstack(rows_img); grid_path=verify/"image_grid_verify.jpg"; cv2.imwrite(str(grid_path),grid,[int(cv2.IMWRITE_JPEG_QUALITY),92])
+            print(f"[verify] grid={grid_path}")
 
 # -----------------------------------------------------------------------------
 # main

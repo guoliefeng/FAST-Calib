@@ -1,0 +1,66 @@
+job_name: front_left
+
+# TODO: 如果你的 front_left 数据目录不是这个路径，只改这里即可
+data_dir: /home/glf/dataDisk/calib/0426/data_221_front_left
+output_dir: ${data_dir}/_calib_output
+
+layout:
+  group_prefix: save_data_
+  bag_name: 1.bag
+  image_name: img_0001.jpg
+  pcd_name: 1.pcd
+  board_pcd_name: board_candidate.pcd
+
+extract_pcd:
+  enabled: true
+  topic_policy: unique
+  frame: middle
+  overwrite: false
+
+roi:
+  enabled: true
+  profile: front_left
+
+  # 针对 front_left 雷达调整后的粗搜索范围
+  # 这次漏检的关键原因通常是 y_max 不够大，save_data_8 的板子在 y≈5.2 m；
+  # 同时 save_data_11 的板子 y_min 可到约 1.9 m，所以 y_min 不能设太高。
+  coarse:
+    x_min: -2.30
+    x_max: 2.40
+    y_min: 1.70
+    y_max: 5.90
+    z_min: -1.35
+    z_max: 0.45
+
+  padding:
+    x: 0.15
+    y: 0.15
+    z: 0.15
+
+  robust_quantile: [0.5, 99.5]
+
+  detector:
+    cluster_grid: 0.28
+    min_component_points: 50
+    min_coarse_points: 50
+    expected_height: 1.0
+    board_span:
+      x: [0.30, 2.30]
+      y: [0.01, 1.70]
+      z: [0.30, 1.40]
+
+fast_calib:
+  package: fast_calib
+  calib_launch: calib.launch
+  # TODO: 按你的真实 config 文件路径修改
+  config_file: /home/glf/dataDisk/calib/FAST-Calib_ws/src/FAST-Calib/config/hesai0426_front_left.yaml
+  pointcloud_source: pcd
+  max_single_rmse: 0.050
+  max_multi_rmse: 0.200
+  multi_min_groups: 3
+  multi_mode: max_groups
+
+verify:
+  enabled: true
+  all_groups: false
+  point_radius: 2

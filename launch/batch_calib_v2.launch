@@ -17,6 +17,10 @@
   <arg name="bag_name" default=""/>
   <arg name="image_name" default=""/>
   <arg name="pcd_name" default=""/>
+  <arg name="lidar_topic" default=""/>
+  <arg name="use_config_groups" default=""/>
+  <arg name="use_config_rois" default=""/>
+  <arg name="pcd_prefer_group_dir" default=""/>
 
   <rosparam file="$(arg config_file)" command="load" subst_value="true"/>
 
@@ -38,5 +42,9 @@
     <param if="$(eval arg('bag_name') != '')" name="bag_name" value="$(arg bag_name)"/>
     <param if="$(eval arg('image_name') != '')" name="image_name" value="$(arg image_name)"/>
     <param if="$(eval arg('pcd_name') != '')" name="pcd_name" value="$(arg pcd_name)"/>
+    <param if="$(eval arg('lidar_topic') != '')" name="lidar_topic" value="$(arg lidar_topic)"/>
+    <param if="$(eval arg('use_config_groups') != '')" name="use_config_groups" value="$(arg use_config_groups)"/>
+    <param if="$(eval arg('use_config_rois') != '')" name="use_config_rois" value="$(arg use_config_rois)"/>
+    <param if="$(eval arg('pcd_prefer_group_dir') != '')" name="pcd_prefer_group_dir" value="$(arg pcd_prefer_group_dir)"/>
   </node>
 </launch>
