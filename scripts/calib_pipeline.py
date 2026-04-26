@@ -321,7 +321,7 @@ def make_box(rmin, rmax, n=80):
 
 def stage_roi(job, groups):
     roi_cfg = job.get("roi", {})
-    _, out = job_paths(job); roi_dir = mkdir(out/"02_roi"); dbg=mkdir(roi_dir/"debug")
+    _, out = job_paths(job); roi_dir = mkdir(out/"02_roi"); dbg=mkdir(roi_dir/"debug"); board_dir=mkdir(roi_dir/"board_candidates")
     existing = roi_cfg.get("existing_file", "")
     if not boolv(roi_cfg.get("enabled", True), True):
         if not existing:
@@ -344,8 +344,11 @@ def stage_roi(job, groups):
             rmin=mn-np.array([pad.get("x",0.15),pad.get("y",0.15),pad.get("z",0.15)]); rmax=mx+np.array([pad.get("x",0.15),pad.get("y",0.15),pad.get("z",0.15)])
             roi={"x_min":ff(rmin[0]),"x_max":ff(rmax[0]),"y_min":ff(rmin[1]),"y_max":ff(rmax[1]),"z_min":ff(rmin[2]),"z_max":ff(rmax[2])}
             rois[g["group"]]=roi; mins.append(rmin); maxs.append(rmax)
-            write_xyz_pcd(g["board_pcd"], board); write_xyz_pcd(dbg/f"{g['group']}_roi_box.pcd", make_box(rmin,rmax))
-            row.update(status="ok",method=method,points_total=pts.shape[0],points_coarse=cf.shape[0],points_board=board.shape[0],**roi)
+            roi_board_pcd=board_dir/f"{g['group']}_board_candidate.pcd"
+            write_xyz_pcd(g["board_pcd"], board)
+            write_xyz_pcd(roi_board_pcd, board)
+            write_xyz_pcd(dbg/f"{g['group']}_roi_box.pcd", make_box(rmin,rmax))
+            row.update(status="ok",method=method,points_total=pts.shape[0],points_coarse=cf.shape[0],points_board=board.shape[0],board_pcd=str(g["board_pcd"]),roi_board_pcd=str(roi_board_pcd),**roi)
         except Exception as e:
             row.update(status="failed",error=str(e)); print("  failed",e)
         rows.append(row)
@@ -359,6 +362,7 @@ def stage_roi(job, groups):
     write_yaml(roi_dir/"roi_groups.yaml", {"batch_calib":{"default_roi":unified,"rois":rois}})
     write_yaml(roi_dir/"roi_unified.yaml", {"default_roi":unified})
     print(f"[roi] unified={unified}")
+    print(f"[roi] board candidates saved in: {board_dir}")
 
 # -----------------------------------------------------------------------------
 # calibrate and multi-SVD
