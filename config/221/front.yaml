@@ -1,0 +1,152 @@
+# Camera intrinsics  
+ # Camera intrinsics
+  fx: 1037.72921
+  fy: 1034.2894
+  cx: 994.74842
+  cy: 551.39056
+  k1: -0.312007
+  k2: 0.067521
+  p1: -0.000809
+  p2: -0.003917
+
+# Calibration target parameters
+  marker_size: 0.20 # ArUco marker size (our test data uses 0.16m; adjust to match your marker size)
+  delta_width_qr_center: 0.55 # Half the distance between the centers of two markers in the horizontal direction 
+  delta_height_qr_center: 0.35 # Half the distance between the centers of two markers in the vertical direction
+  delta_width_circles: 0.5 # Distance between the centers of two circles in the horizontal direction
+  delta_height_circles: 0.4 # Distance between the centers of two circles in the vertical direction
+  circle_radius: 0.12 # Radius of the circle 
+# Distance filter
+  # x_min: 0.69
+  # x_max: 2.24
+  # y_min: -3.88
+  # y_max: -2.84
+  # z_min: -1.15
+  # z_max: 0.21
+
+# Hesai group 2
+  # x_min: 1.24
+  # x_max: 2.18
+  # y_min: -4.01
+  # y_max: -2.40
+  # z_min: -1.07
+  # z_max: 0.21
+
+# Hesai group 3
+  # x_min: 1.89
+  # x_max: 2.70
+  # y_min: -3.03
+  # y_max: -1.36
+  # z_min: -1.08
+  # z_max: 0.21
+
+# Hesai group 4
+  # x_min: 2.39
+  # x_max: 3.16
+  # y_min: -1.95
+  # y_max: -0.26
+  # z_min: -0.99
+  # z_max: 0.20
+# Hesai group 5
+  # x_min: 1.94
+  # x_max: 2.72
+  # y_min: -1.90
+  # y_max: -0.21
+  # z_min: -0.98
+  # z_max: 0.20
+# Hesai group 6
+  # x_min: 2.37
+  # x_max: 3.13
+  # y_min: -2.14
+  # y_max: -0.44
+  # z_min: -1.01
+  # z_max: 0.20
+# Hesai group 7
+  # x_min: 2.03
+  # x_max: 2.82
+  # y_min: -2.07
+  # y_max: -0.39
+  # z_min: -1.02
+  # z_max: 0.20
+  # Hesai group 8 maybe bad
+  # x_min: 1.89
+  # x_max: 2.94
+  # y_min: -2.12
+  # y_max: -0.31
+  # z_min: -0.94
+  # z_max: 0.10
+  # Hesai group 9 
+  # x_min: 1.39
+  # x_max: 2.79
+  # y_min: -3.37
+  # y_max: -1.58
+  # z_min: -0.96
+  # z_max: 0.09
+  # Hesai group 10 
+  # x_min: 1.64
+  # x_max: 2.56
+  # y_min: -3.29
+  # y_max: -1.66
+  # z_min: -1.08
+  # z_max: 0.21
+  # Hesai group 11 12  13 (maybe bad) 14 15  16 17 18 
+  x_min: 0.55
+  x_max: 3.30
+  y_min: -4.15
+  y_max: -0.05
+  z_min: -1.25
+  z_max: 0.30
+# Input
+  pointcloud_source: "bag" # "bag" or "pcd"
+  lidar_topic: "velodyne_first" # Used only when pointcloud_source is "bag"
+  bag_path: "/home/glf/dataDisk/calib/0425/data_221/save_data_18/1.bag"
+  pcd_path: "/home/glf/dataDisk/calib/0425/data_221/save_data_2/1.pcd"
+  image_path: "/home/glf/dataDisk/calib/0425/data_221/save_data_18/img_0001.jpg"
+
+# Output
+  output_path: "$(find fast_calib)/output/0425/18"
+
+# Batch calibration. batch_calib.launch reads this block and runs each group
+# using either bag input, pcd input, or both.
+  batch_calib:
+    data_dir: "/home/glf/dataDisk/calib/221"
+    output_path: "$(find fast_calib)/output/0424/batch_221"
+    groups: [1, 2, 3, 4]
+    pointcloud_source: "both" # "bag", "pcd", or "both"
+    pointcloud_sources: ["bag", "pcd"] # kept for compatibility; pointcloud_source takes priority
+    lidar_topic: "/velodyne_first"
+    pcd_prefer_group_dir: true
+    continue_on_error: true
+    max_single_rmse: 0.05
+    run_multi: true
+    multi_mode: "best" # "best", "good", or "all"
+    multi_min_groups: 3
+    rois:
+      "1":
+        x_min: 0.59
+        x_max: 2.18
+        y_min: -3.65
+        y_max: -2.62
+        z_min: -1.08
+        z_max: 0.32
+      "2":
+        x_min: 3.45
+        x_max: 4.34
+        y_min: -2.42
+        y_max: -0.79
+        z_min: -1.13
+        z_max: 0.22
+      "3":
+        x_min: 2.42
+        x_max: 3.81
+        y_min: -2.89
+        y_max: -1.59
+        z_min: -1.06
+        z_max: 0.21
+      "4":
+        x_min: 2.22
+        x_max: 3.18
+        y_min: -3.63
+        y_max: -2.01
+        z_min: -0.97
+        z_max: 0.34

@@ -1,0 +1,62 @@
+# Rear Hesai calibration config for directory-driven batch calibration.
+# Normal workflow: update only batch_calib.data_dir when a new dataset arrives.
+
+# Camera intrinsics
+fx: 1164.375567
+fy: 1161.136724
+cx: 1011.908512
+cy: 531.246664
+k1: -0.398205
+k2: 0.118468
+p1: 0.003960
+p2: -0.005268
+
+# Calibration target parameters
+marker_size: 0.20
+delta_width_qr_center: 0.55
+delta_height_qr_center: 0.35
+delta_width_circles: 0.5
+delta_height_circles: 0.4
+circle_radius: 0.12
+
+# Fallback ROI for single calib.launch. Batch calibration loads per-group ROI
+# from batch_calib.roi_file below.
+x_min: 1.1393
+x_max: 4.2911
+y_min: -4.7237
+y_max: -0.3555
+z_min: -1.1536
+z_max: 0.3370
+
+# Single-scene defaults. Batch calibration overrides these per group.
+pointcloud_source: "bag"
+lidar_topic: "velodyne_second"
+bag_path: "/home/glf/dataDisk/calib/0426/data_221_rear/save_data_1/1.bag"
+pcd_path: "/home/glf/dataDisk/calib/0426/data_221_rear/save_data_1/1.pcd"
+image_path: "/home/glf/dataDisk/calib/0426/data_221_rear/save_data_1/img_0001.jpg"
+output_path: "/home/glf/dataDisk/calib/0426/data_221_rear/fast_calib_output/single_preview"
+
+# Batch pipeline. The script auto-discovers save_data_* groups, reads
+# save_data_N/1.bag + save_data_N/img_0001.jpg, and writes results under
+# data_dir/fast_calib_output when output_path is empty.
+batch_calib:
+  data_dir: "/home/glf/dataDisk/calib/0426/data_221_rear"
+  output_path: ""
+  output_dir_name: "fast_calib_output"
+  group_layout: "save_data"
+  group_dir_prefix: "save_data_"
+  bag_name: "1.bag"
+  image_name: "img_0001.jpg"
+  pcd_name: "1.pcd"
+  roi_file: "board_roi_groups.yaml"
+  use_config_groups: false
+  use_config_rois: true
+  pointcloud_source: "bag"
+  pointcloud_sources: ["bag", "pcd"]
+  lidar_topic: "velodyne_second"
+  pcd_prefer_group_dir: true
+  continue_on_error: true
+  max_single_rmse: 0.05
+  run_multi: true
+  multi_mode: "best"
+  multi_min_groups: 3
