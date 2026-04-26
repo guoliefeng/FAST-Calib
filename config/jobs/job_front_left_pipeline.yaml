@@ -58,7 +58,7 @@ fast_calib:
   max_single_rmse: 0.050
   max_multi_rmse: 0.200
   multi_min_groups: 3
-  multi_mode: max_groups
+  multi_mode: all_centers
 
 verify:
   enabled: true
