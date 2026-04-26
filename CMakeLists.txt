@@ -47,5 +47,6 @@ target_link_libraries(multi_fast_calib
 catkin_install_python(PROGRAMS
   scripts/batch_calib.py
   scripts/calib_pipeline.py
+  scripts/run_four_calib_jobs.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

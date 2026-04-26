@@ -460,7 +460,7 @@ def choose_multi(records, min_groups, max_multi, mode):
 def stage_calibrate(job, groups):
     _, out=job_paths(job); single=mkdir(out/"03_single"); multi=mkdir(out/"04_multi"); roi_data=load_yaml(out/"02_roi"/"roi_groups.yaml"); fc=job["fast_calib"]
     max_single=float(fc.get("max_single_rmse",0.03)); max_multi=float(fc.get("max_multi_rmse",0.03)); min_groups=int(fc.get("multi_min_groups",3)); multi_mode=str(fc.get("multi_mode","max_groups"))
-    rows=[]; records={}; four_center_groups=[]
+    rows=[]; records={}; four_center_groups=[]; non_four_center_rows=[]
     for g in groups:
         roi=roi_for_group(roi_data,g["group"])
         if not roi: rows.append({"group":g["group"],"ok":False,"reason":"missing_roi"}); continue
@@ -471,15 +471,27 @@ def stage_calibrate(job, groups):
         r["four_center_ok"]=four_center_ok
         if four_center_ok:
             records[g["group"]]=(a,b); four_center_groups.append(g["group"])
+        else:
+            non_four_center_rows.append({
+                "group": g["group"],
+                "reason": r.get("reason",""),
+                "lidar_centers": r.get("lidar_centers",""),
+                "qr_centers": r.get("qr_centers",""),
+                "rmse": r.get("rmse",""),
+                "log_path": r.get("log_path",""),
+            })
         rows.append(r)
     fields=sorted(set(k for r in rows for k in r.keys()))
     with (out/"batch_summary.csv").open("w",encoding="utf-8",newline="") as f: w=csv.DictWriter(f,fieldnames=fields); w.writeheader(); w.writerows(rows)
+    with (multi/"non_four_center_groups.csv").open("w",encoding="utf-8",newline="") as f:
+        w=csv.DictWriter(f,fieldnames=["group","reason","lidar_centers","qr_centers","rmse","log_path"])
+        w.writeheader(); w.writerows(non_four_center_rows)
     if multi_mode in ("all_centers","all_4centers","all_detected","all_center_records"):
         selected=choose_all_center_records(records,min_groups); candidates=[]; history_raw=[]
     else:
         selected,candidates,history_raw=choose_multi(records,min_groups,max_multi,multi_mode)
     if selected is None:
-        write_yaml(multi/"multi_result.yaml",{"status":"failed","reason":"not_enough_4center_groups","four_center_groups":four_center_groups})
+        write_yaml(multi/"multi_result.yaml",{"status":"failed","reason":"not_enough_4center_groups","four_center_groups":four_center_groups,"non_four_center_groups":non_four_center_rows})
         return
     cur=selected["groups"]; R=selected["R"]; t=selected["t"]; rmse=selected["rmse"]; per=selected["per_group"]
     history=[
@@ -492,7 +504,7 @@ def stage_calibrate(job, groups):
             for c in candidates:
                 w.writerow({"group_count":len(c["groups"]),"rmse":f"{c['rmse']:.6f}","groups":" ".join(c["groups"])})
     T=np.eye(4); T[:3,:3]=R; T[:3,3]=t
-    result={"status":"ok" if rmse<=max_multi else "warn","rmse":ff(rmse),"multi_mode":multi_mode,"selection_policy":selected.get("policy",multi_mode),"four_center_groups":four_center_groups,"max_multi_rmse":ff(max_multi),"selected_groups":cur,"T_cam_lidar":[[ff(x) for x in row] for row in T.tolist()],"Rcl":[[ff(x) for x in row] for row in R.tolist()],"Pcl":[ff(x) for x in t.tolist()],"history":history}
+    result={"status":"ok" if rmse<=max_multi else "warn","rmse":ff(rmse),"multi_mode":multi_mode,"selection_policy":selected.get("policy",multi_mode),"four_center_groups":four_center_groups,"non_four_center_groups":non_four_center_rows,"max_multi_rmse":ff(max_multi),"selected_groups":cur,"T_cam_lidar":[[ff(x) for x in row] for row in T.tolist()],"Rcl":[[ff(x) for x in row] for row in R.tolist()],"Pcl":[ff(x) for x in t.tolist()],"history":history}
     write_yaml(multi/"multi_result.yaml",result); write_yaml(out/"final_extrinsic.yaml",result); (multi/"selected_groups.txt").write_text("\n".join(cur)+"\n",encoding="utf-8")
     with (multi/"multi_calib_result.txt").open("w", encoding="utf-8") as f:
         f.write("# FAST-LIVO2 calibration format\n")
