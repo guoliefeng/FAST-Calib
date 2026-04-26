@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import rospy
 import rospkg
+import yaml
 
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -102,6 +103,36 @@ def natural_key(value):
     return [int(p) if p.isdigit() else p for p in parts]
 
 
+def resolve_path(value, base_dir=None):
+    value = expand_ros_find(value)
+    if not isinstance(value, str) or not value:
+        return value
+    path = Path(value).expanduser()
+    if base_dir and not path.is_absolute():
+        path = Path(base_dir).expanduser() / path
+    return str(path)
+
+
+def load_batch_yaml(path):
+    if not path:
+        return {}
+    yaml_path = Path(path).expanduser()
+    if not yaml_path.exists():
+        rospy.logwarn("Batch ROI yaml does not exist: %s", yaml_path)
+        return {}
+    with yaml_path.open("r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        rospy.logwarn("Batch ROI yaml is not a dictionary: %s", yaml_path)
+        return {}
+    batch = data.get("batch_calib", data)
+    if not isinstance(batch, dict):
+        rospy.logwarn("Batch ROI yaml has no dictionary batch_calib block: %s", yaml_path)
+        return {}
+    rospy.loginfo("Loaded batch ROI yaml: %s", yaml_path)
+    return batch
+
+
 def get_batch_config():
     cfg = rospy.get_param("/batch_calib", {})
     if not isinstance(cfg, dict):
@@ -114,8 +145,12 @@ def get_batch_config():
         return cfg.get(name, default)
 
     config_file = expand_ros_find(private_or_cfg("config_file", ""))
-    data_dir = expand_ros_find(private_or_cfg("data_dir", cfg.get("data_dir", "")))
-    output_path = expand_ros_find(private_or_cfg("output_path", cfg.get("output_path", "")))
+    data_dir = resolve_path(private_or_cfg("data_dir", cfg.get("data_dir", "")))
+    output_path = resolve_path(private_or_cfg("output_path", cfg.get("output_path", "")))
+    output_dir_name = str(private_or_cfg("output_dir_name", cfg.get("output_dir_name", "fast_calib_output")))
+    roi_file = private_or_cfg("roi_file", cfg.get("roi_file", ""))
+    roi_file_path = resolve_path(roi_file, data_dir) if roi_file else ""
+    roi_cfg = load_batch_yaml(roi_file_path) if roi_file_path else {}
     use_config_groups = parse_bool(private_or_cfg("use_config_groups", cfg.get("use_config_groups", True)))
     private_groups = rospy.get_param("~groups", None)
     if private_groups not in (None, ""):
@@ -150,12 +185,12 @@ def get_batch_config():
     bag_name = str(private_or_cfg("bag_name", cfg.get("bag_name", "1.bag")))
     image_name = str(private_or_cfg("image_name", cfg.get("image_name", "img_0001.jpg")))
     pcd_name = str(private_or_cfg("pcd_name", cfg.get("pcd_name", "")))
-    rois = cfg.get("rois", {})
+    rois = roi_cfg.get("rois", cfg.get("rois", {}))
     if not isinstance(rois, dict):
         rois = {}
     if not use_config_rois:
         rois = {}
-    default_roi = cfg.get("default_roi", {})
+    default_roi = roi_cfg.get("default_roi", cfg.get("default_roi", {}))
     if not isinstance(default_roi, dict):
         default_roi = {}
     for key in ["x_min", "x_max", "y_min", "y_max", "z_min", "z_max"]:
@@ -171,6 +206,9 @@ def get_batch_config():
         "config_file": config_file,
         "data_dir": data_dir,
         "output_path": output_path,
+        "output_dir_name": output_dir_name,
+        "roi_file": roi_file,
+        "roi_file_path": roi_file_path,
         "groups": groups,
         "use_config_groups": use_config_groups,
         "sources": sources,
@@ -277,8 +315,17 @@ def discover_groups(data_dir, sources):
     return groups
 
 
-def get_roi(group, rois):
-    keys = [str(group), int(group) if str(group).isdigit() else None]
+def get_roi(group, rois, group_dir_prefix="save_data_"):
+    group_text = str(group)
+    keys = [
+        group_text,
+        int(group_text) if group_text.isdigit() else None,
+    ]
+    if group_dir_prefix and not group_text.startswith(group_dir_prefix):
+        keys.append(f"{group_dir_prefix}{group_text}")
+    if group_dir_prefix and group_text.startswith(group_dir_prefix):
+        suffix = group_text[len(group_dir_prefix):]
+        keys.extend([suffix, int(suffix) if suffix.isdigit() else None])
     roi = None
     for key in keys:
         if key in rois:
@@ -292,8 +339,8 @@ def get_roi(group, rois):
     return {k: roi[k] for k in required}
 
 
-def get_group_roi(group, rois, default_roi):
-    roi = get_roi(group, rois)
+def get_group_roi(group, rois, default_roi, group_dir_prefix="save_data_"):
+    roi = get_roi(group, rois, group_dir_prefix)
     if roi is not None:
         return roi
     if not isinstance(default_roi, dict):
@@ -811,12 +858,12 @@ def main():
         rospy.logerr("No groups found in %s", data_dir)
         return 1
 
-    output_root = Path(config["output_path"]) if config["output_path"] else Path.cwd() / "batch_calib_output"
+    output_root = Path(config["output_path"]) if config["output_path"] else data_dir / config["output_dir_name"]
     output_root.mkdir(parents=True, exist_ok=True)
 
     rows = []
     for group in groups:
-        roi = get_group_roi(group, config["rois"], config["default_roi"])
+        roi = get_group_roi(group, config["rois"], config["default_roi"], config["group_dir_prefix"])
         if roi is None:
             row = {
                 "group": group,

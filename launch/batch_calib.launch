@@ -1,5 +1,5 @@
 <launch>
-  <arg name="config_file" default="$(find fast_calib)/config/hesai0425_rearr.yaml"/>
+  <arg name="config_file" default="$(find fast_calib)/config/hesai0426_rear.yaml"/>
   <arg name="data_dir" default=""/>
   <arg name="output_path" default=""/>
   <arg name="groups" default=""/>
