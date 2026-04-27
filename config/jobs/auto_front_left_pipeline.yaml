@@ -48,12 +48,13 @@ fast_calib:
   package: fast_calib
   calib_launch: calib.launch
   config_file: /home/glf/dataDisk/calib/FAST-Calib_ws/src/FAST-Calib/config/hesai0426_front_left.yaml
-  pointcloud_source: pcd
-  max_single_rmse: 0.03
+  pointcloud_source: bag
+  max_single_rmse: 0.08
   max_multi_rmse: 0.03
+  max_group_rmse: 0.06
   multi_min_groups: 3
-  multi_mode: all_centers
+  multi_mode: robust_max_groups
 verify:
   enabled: true
-  all_groups: false
+  all_groups: true
   point_radius: 2

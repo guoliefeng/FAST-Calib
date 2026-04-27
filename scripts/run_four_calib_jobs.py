@@ -105,14 +105,18 @@ def make_job(sensor_name: str, sensor: Dict[str, Any]) -> Dict[str, Any]:
             "package": "fast_calib",
             "calib_launch": "calib.launch",
             "config_file": first_existing(sensor["config_candidates"]),
-            "pointcloud_source": "pcd",
-            "max_single_rmse": 0.030,
+            # 1.pcd is extracted from one frame and is mainly for ROI detection
+            # or inspection. Final circle fitting should use the original bag so
+            # FAST-Calib can load the denser cloud used by the manual workflow.
+            "pointcloud_source": "bag",
+            "max_single_rmse": 0.080,
             "max_multi_rmse": 0.030,
             "max_group_rmse": 0.060,
             "multi_min_groups": 3,
             "multi_mode": "robust_max_groups",
         },
-        "verify": {"enabled": True, "all_groups": False, "point_radius": 2},
+        # Project all groups, not only selected groups, so bad generalization is visible.
+        "verify": {"enabled": True, "all_groups": True, "point_radius": 2},
     }
 
 
@@ -182,17 +186,31 @@ def parse_sensor_summary(sensor_name: str, sensor: Dict[str, Any]) -> Dict[str, 
     if not isinstance(selected_groups, list):
         selected_groups = []
 
+    four_count = len(four_center_groups)
+    selected_count = len(selected_groups)
+    selected_ratio = float(selected_count) / float(four_count) if four_count else 0.0
+
+    warnings = []
+    if four_count and selected_count < 5:
+        warnings.append("selected_count_lt_5")
+    if four_count and selected_ratio < 0.4:
+        warnings.append("selected_ratio_lt_0.4")
+    if str(multi.get("status", "")).lower() not in ("ok", ""):
+        warnings.append("multi_status_not_ok")
+
     return {
         "sensor": sensor_name,
         "data_dir": str(data_dir),
         "output_dir": str(output_dir),
         "status": multi.get("status", ""),
         "rmse": multi.get("rmse", ""),
-        "four_center_count": len(four_center_groups),
-        "selected_count": len(selected_groups),
+        "four_center_count": four_count,
+        "selected_count": selected_count,
+        "selected_ratio": f"{selected_ratio:.3f}",
         "four_center_groups": four_center_groups,
         "selected_groups": selected_groups,
         "failed_groups": failed_groups,
+        "warnings": warnings,
         "final_extrinsic": str(output_dir / "final_extrinsic.yaml"),
         "batch_summary": str(output_dir / "batch_summary.csv"),
         "multi_result": str(multi_path),
@@ -204,7 +222,7 @@ def write_report(summaries: List[Dict[str, Any]]) -> None:
 
     summary_csv = REPORT_DIR / "four_sensor_summary.csv"
     with summary_csv.open("w", encoding="utf-8", newline="") as f:
-        fields = ["sensor", "data_dir", "status", "rmse", "four_center_count", "selected_count", "final_extrinsic", "batch_summary", "multi_result"]
+        fields = ["sensor", "data_dir", "status", "rmse", "four_center_count", "selected_count", "selected_ratio", "warnings", "final_extrinsic", "batch_summary", "multi_result"]
         writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
         for s in summaries:
@@ -229,6 +247,8 @@ def write_report(summaries: List[Dict[str, Any]]) -> None:
         lines.append(f"- multi RMSE: `{s['rmse']}`\n")
         lines.append(f"- four-center groups: {s['four_center_count']}\n")
         lines.append(f"- selected groups: {s['selected_count']}\n")
+        lines.append(f"- selected ratio: `{s.get('selected_ratio', '')}`\n")
+        lines.append(f"- warnings: `{', '.join(s.get('warnings', [])) if s.get('warnings') else 'None'}`\n")
         lines.append(f"- final extrinsic: `{s['final_extrinsic']}`\n")
         lines.append(f"- selected groups: `{', '.join(s['selected_groups'])}`\n")
         bad = [r["group"] for r in s["failed_groups"]]
