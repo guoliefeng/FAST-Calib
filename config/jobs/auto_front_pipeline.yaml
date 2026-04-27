@@ -51,8 +51,9 @@ fast_calib:
   pointcloud_source: pcd
   max_single_rmse: 0.03
   max_multi_rmse: 0.03
+  max_group_rmse: 0.06
   multi_min_groups: 3
-  multi_mode: all_centers
+  multi_mode: robust_max_groups
 verify:
   enabled: true
   all_groups: false

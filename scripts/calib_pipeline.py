@@ -417,6 +417,81 @@ def eval_groups(records, gs):
         aa,bb=records[g]; pred=(R@aa.T).T+t; per[g]=float(np.sqrt(np.mean(np.linalg.norm(pred-bb,axis=1)**2)))
     return R,t,rmse,per
 
+def residuals_for_records(records, R, t):
+    per={}
+    for g,(aa,bb) in records.items():
+        pred=(R@aa.T).T+t
+        per[g]=float(np.sqrt(np.mean(np.linalg.norm(pred-bb,axis=1)**2)))
+    return per
+
+def center_array_to_list(a):
+    return [[ff(x) for x in p] for p in a.tolist()]
+
+def row_lookup(rows):
+    out={}
+    for r in rows:
+        g=r.get("group","")
+        if g:
+            out[g]=r
+    return out
+
+def write_center_records(multi_dir, records, rows, selected_groups=None, per_group=None):
+    selected=set(selected_groups or [])
+    per_group=per_group or {}
+    rows_by_group=row_lookup(rows)
+    yaml_obj={"groups":{}}
+    csv_rows=[]
+    for group in sorted(records.keys(), key=natural_key):
+        lidar,qr=records[group]
+        info=rows_by_group.get(group,{})
+        yaml_obj["groups"][group]={
+            "selected": group in selected,
+            "single_rmse": info.get("rmse"),
+            "multi_group_rmse": ff(per_group[group]) if group in per_group else None,
+            "reason": info.get("reason",""),
+            "log_path": info.get("log_path",""),
+            "output_dir": info.get("output_dir",""),
+            "lidar_centers": center_array_to_list(lidar),
+            "qr_centers": center_array_to_list(qr),
+        }
+        for i in range(4):
+            csv_rows.append({
+                "group": group,
+                "selected": group in selected,
+                "center_index": i,
+                "single_rmse": info.get("rmse",""),
+                "multi_group_rmse": ff(per_group[group]) if group in per_group else "",
+                "lidar_x": ff(lidar[i,0]), "lidar_y": ff(lidar[i,1]), "lidar_z": ff(lidar[i,2]),
+                "qr_x": ff(qr[i,0]), "qr_y": ff(qr[i,1]), "qr_z": ff(qr[i,2]),
+                "log_path": info.get("log_path",""),
+            })
+    write_yaml(multi_dir/"all_circle_centers.yaml", yaml_obj)
+    with (multi_dir/"all_circle_centers.csv").open("w",encoding="utf-8",newline="") as f:
+        fields=["group","selected","center_index","single_rmse","multi_group_rmse",
+                "lidar_x","lidar_y","lidar_z","qr_x","qr_y","qr_z","log_path"]
+        w=csv.DictWriter(f,fieldnames=fields); w.writeheader(); w.writerows(csv_rows)
+
+def write_selection_tables(multi_dir, history, selected_groups, per_group):
+    with (multi_dir/"selection_history.csv").open("w",encoding="utf-8",newline="") as f:
+        fields=["iter","group_count","rmse","worst_group","worst_rmse","removed_next","groups"]
+        w=csv.DictWriter(f,fieldnames=fields); w.writeheader()
+        for i,h in enumerate(history or []):
+            w.writerow({
+                "iter": i,
+                "group_count": len(h.get("groups",[])),
+                "rmse": ff(h.get("rmse",0.0)),
+                "worst_group": h.get("worst_group",""),
+                "worst_rmse": ff(h.get("worst_rmse",0.0)) if h.get("worst_rmse","") != "" else "",
+                "removed_next": h.get("removed_next",""),
+                "groups": ",".join(h.get("groups",[])),
+            })
+    with (multi_dir/"group_residuals.csv").open("w",encoding="utf-8",newline="") as f:
+        fields=["group","selected","multi_group_rmse"]
+        w=csv.DictWriter(f,fieldnames=fields); w.writeheader()
+        selected=set(selected_groups or [])
+        for g in sorted(per_group.keys(), key=natural_key):
+            w.writerow({"group":g,"selected":g in selected,"multi_group_rmse":ff(per_group[g])})
+
 def choose_all_center_records(records, min_groups):
     groups=list(records.keys())
     if len(groups)<min_groups:
@@ -424,11 +499,46 @@ def choose_all_center_records(records, min_groups):
     R,t,rmse,per=eval_groups(records,groups)
     return {"groups":groups,"rmse":rmse,"per_group":per,"R":R,"t":t,"policy":"all_center_records"}
 
-def choose_multi(records, min_groups, max_multi, mode):
+def choose_robust_max_groups(records, min_groups, max_multi, max_group_rmse):
     groups=list(records.keys())
     if len(groups)<min_groups:
         return None, [], []
+    cur=list(groups); history=[]
+    while len(cur)>=min_groups:
+        R,t,rmse,per=eval_groups(records,cur)
+        worst=max(per,key=per.get)
+        item={
+            "groups":list(cur),
+            "rmse":rmse,
+            "per_group":per,
+            "R":R,
+            "t":t,
+            "policy":"robust_max_groups",
+            "worst_group":worst,
+            "worst_rmse":per[worst],
+            "removed_next": worst if len(cur)>min_groups else "",
+        }
+        history.append(item)
+        if rmse<=max_multi and per[worst]<=max_group_rmse:
+            return item, [], history
+        if len(cur)==min_groups:
+            break
+        cur=[g for g in cur if g!=worst]
+    valid=[h for h in history if h["rmse"]<=max_multi and h["worst_rmse"]<=max_group_rmse]
+    if valid:
+        return max(valid, key=lambda h:(len(h["groups"]), -h["rmse"])), [], history
+    fallback=min(history, key=lambda h:(h["rmse"], len(h["groups"]))) if history else None
+    return fallback, [], history
+
+def choose_multi(records, min_groups, max_multi, mode, max_group_rmse=None):
+    groups=list(records.keys())
+    if max_group_rmse is None:
+        max_group_rmse=max(2.0*max_multi, 0.06)
+    if len(groups)<min_groups:
+        return None, [], []
     candidates=[]
+    if mode in ("robust_max_groups", "robust", "max_consensus", "largest_consensus"):
+        return choose_robust_max_groups(records, min_groups, max_multi, max_group_rmse)
     if mode in ("max_groups", "best", "exhaustive"):
         for size in range(min_groups, len(groups)+1):
             best=None
@@ -459,7 +569,7 @@ def choose_multi(records, min_groups, max_multi, mode):
 
 def stage_calibrate(job, groups):
     _, out=job_paths(job); single=mkdir(out/"03_single"); multi=mkdir(out/"04_multi"); roi_data=load_yaml(out/"02_roi"/"roi_groups.yaml"); fc=job["fast_calib"]
-    max_single=float(fc.get("max_single_rmse",0.03)); max_multi=float(fc.get("max_multi_rmse",0.03)); min_groups=int(fc.get("multi_min_groups",3)); multi_mode=str(fc.get("multi_mode","max_groups"))
+    max_single=float(fc.get("max_single_rmse",0.03)); max_multi=float(fc.get("max_multi_rmse",0.03)); max_group_rmse=float(fc.get("max_group_rmse",max(2.0*max_multi,0.06))); min_groups=int(fc.get("multi_min_groups",3)); multi_mode=str(fc.get("multi_mode","max_groups"))
     rows=[]; records={}; four_center_groups=[]; non_four_center_rows=[]
     for g in groups:
         roi=roi_for_group(roi_data,g["group"])
@@ -486,14 +596,17 @@ def stage_calibrate(job, groups):
     with (multi/"non_four_center_groups.csv").open("w",encoding="utf-8",newline="") as f:
         w=csv.DictWriter(f,fieldnames=["group","reason","lidar_centers","qr_centers","rmse","log_path"])
         w.writeheader(); w.writerows(non_four_center_rows)
+    write_center_records(multi, records, rows)
     if multi_mode in ("all_centers","all_4centers","all_detected","all_center_records"):
         selected=choose_all_center_records(records,min_groups); candidates=[]; history_raw=[]
     else:
-        selected,candidates,history_raw=choose_multi(records,min_groups,max_multi,multi_mode)
+        selected,candidates,history_raw=choose_multi(records,min_groups,max_multi,multi_mode,max_group_rmse)
     if selected is None:
         write_yaml(multi/"multi_result.yaml",{"status":"failed","reason":"not_enough_4center_groups","four_center_groups":four_center_groups,"non_four_center_groups":non_four_center_rows})
         return
-    cur=selected["groups"]; R=selected["R"]; t=selected["t"]; rmse=selected["rmse"]; per=selected["per_group"]
+    cur=selected["groups"]; R=selected["R"]; t=selected["t"]; rmse=selected["rmse"]; per=selected["per_group"]; per_all=residuals_for_records(records,R,t)
+    write_center_records(multi, records, rows, cur, per_all)
+    write_selection_tables(multi, (candidates if candidates else history_raw), cur, per_all)
     history=[
         {"groups":c["groups"],"rmse":ff(c["rmse"]),"per_group":{k:ff(v) for k,v in c["per_group"].items()}}
         for c in (candidates if candidates else history_raw)
@@ -504,7 +617,7 @@ def stage_calibrate(job, groups):
             for c in candidates:
                 w.writerow({"group_count":len(c["groups"]),"rmse":f"{c['rmse']:.6f}","groups":" ".join(c["groups"])})
     T=np.eye(4); T[:3,:3]=R; T[:3,3]=t
-    result={"status":"ok" if rmse<=max_multi else "warn","rmse":ff(rmse),"multi_mode":multi_mode,"selection_policy":selected.get("policy",multi_mode),"four_center_groups":four_center_groups,"non_four_center_groups":non_four_center_rows,"max_multi_rmse":ff(max_multi),"selected_groups":cur,"T_cam_lidar":[[ff(x) for x in row] for row in T.tolist()],"Rcl":[[ff(x) for x in row] for row in R.tolist()],"Pcl":[ff(x) for x in t.tolist()],"history":history}
+    result={"status":"ok" if rmse<=max_multi and (not per or max(per.values())<=max_group_rmse) else "warn","rmse":ff(rmse),"max_multi_rmse":ff(max_multi),"max_group_rmse":ff(max_group_rmse),"multi_mode":multi_mode,"selection_policy":selected.get("policy",multi_mode),"four_center_groups":four_center_groups,"non_four_center_groups":non_four_center_rows,"selected_groups":cur,"final_group_residuals":{k:ff(v) for k,v in sorted(per_all.items(), key=lambda kv:natural_key(kv[0]))},"T_cam_lidar":[[ff(x) for x in row] for row in T.tolist()],"Rcl":[[ff(x) for x in row] for row in R.tolist()],"Pcl":[ff(x) for x in t.tolist()],"history":history}
     write_yaml(multi/"multi_result.yaml",result); write_yaml(out/"final_extrinsic.yaml",result); (multi/"selected_groups.txt").write_text("\n".join(cur)+"\n",encoding="utf-8")
     with (multi/"multi_calib_result.txt").open("w", encoding="utf-8") as f:
         f.write("# FAST-LIVO2 calibration format\n")

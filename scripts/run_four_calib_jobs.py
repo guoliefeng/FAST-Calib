@@ -108,8 +108,9 @@ def make_job(sensor_name: str, sensor: Dict[str, Any]) -> Dict[str, Any]:
             "pointcloud_source": "pcd",
             "max_single_rmse": 0.030,
             "max_multi_rmse": 0.030,
+            "max_group_rmse": 0.060,
             "multi_min_groups": 3,
-            "multi_mode": "all_centers",
+            "multi_mode": "robust_max_groups",
         },
         "verify": {"enabled": True, "all_groups": False, "point_radius": 2},
     }
