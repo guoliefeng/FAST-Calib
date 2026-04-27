@@ -643,14 +643,30 @@ def stage_verify(job, groups):
     for g in groups:
         if selected and g["group"] not in selected and not boolv(job.get("verify",{}).get("all_groups",False),False): continue
         img=cv2.imread(g["image"]); bp=Path(g["board_pcd"])
-        if img is None or not bp.exists(): continue
+        if img is None:
+            rows.append({"group":g["group"],"status":"skipped","reason":"image_not_found_or_unreadable","points_projected":0,"image":g["image"],"board_pcd":str(bp),"overlay":""})
+            print(f"[verify] {g['group']} skipped: image not found or unreadable: {g['image']}")
+            continue
+        if not bp.exists():
+            rows.append({"group":g["group"],"status":"skipped","reason":"board_pcd_not_found","points_projected":0,"image":g["image"],"board_pcd":str(bp),"overlay":""})
+            print(f"[verify] {g['group']} skipped: board pcd not found: {bp}")
+            continue
         pts=load_pcd_xyz(bp); pts_h=np.hstack([pts,np.ones((pts.shape[0],1))]); pc=(T@pts_h.T).T[:,:3]; pc=pc[pc[:,2]>0.05]
-        if pc.shape[0]==0: continue
+        if pc.shape[0]==0:
+            rows.append({"group":g["group"],"status":"skipped","reason":"all_points_behind_camera","points_projected":0,"image":g["image"],"board_pcd":str(bp),"overlay":""})
+            print(f"[verify] {g['group']} skipped: all transformed points are behind the camera")
+            continue
         uv,_=cv2.projectPoints(pc.reshape(-1,1,3),np.zeros((3,1)),np.zeros((3,1)),K,D); uv=uv.reshape(-1,2); h,w=img.shape[:2]; m=(uv[:,0]>=0)&(uv[:,0]<w)&(uv[:,1]>=0)&(uv[:,1]<h); uv=uv[m]
+        if uv.shape[0]==0:
+            rows.append({"group":g["group"],"status":"warn","reason":"all_projected_points_outside_image","points_projected":0,"image":g["image"],"board_pcd":str(bp),"overlay":""})
+            print(f"[verify] {g['group']} warning: all projected points are outside the image")
+            continue
         for u,v in uv: cv2.circle(img,(int(round(u)),int(round(v))),int(job.get("verify",{}).get("point_radius",2)),(0,0,255),-1)
-        outimg=verify/f"{g['group']}_board_overlay.png"; cv2.imwrite(str(outimg),img); written.append(outimg); rows.append({"group":g["group"],"points_projected":uv.shape[0],"overlay":str(outimg)})
+        outimg=verify/f"{g['group']}_board_overlay.png"; cv2.imwrite(str(outimg),img); written.append(outimg); rows.append({"group":g["group"],"status":"ok","reason":"","points_projected":uv.shape[0],"image":g["image"],"board_pcd":str(bp),"overlay":str(outimg)})
         print(f"[verify] {g['group']} projected={uv.shape[0]}")
-    with (verify/"verify_summary.csv").open("w",encoding="utf-8",newline="") as f: w=csv.DictWriter(f,fieldnames=["group","points_projected","overlay"]); w.writeheader(); w.writerows(rows)
+    with (verify/"verify_summary.csv").open("w",encoding="utf-8",newline="") as f:
+        w=csv.DictWriter(f,fieldnames=["group","status","reason","points_projected","image","board_pcd","overlay"])
+        w.writeheader(); w.writerows(rows)
     if written:
         thumbs=[]; cols=int(job.get("verify",{}).get("grid_cols",5))
         for p in written:
