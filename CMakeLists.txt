@@ -48,5 +48,6 @@ catkin_install_python(PROGRAMS
   scripts/batch_calib.py
   scripts/calib_pipeline.py
   scripts/run_four_calib_jobs.py
+  scripts/detect_airy_left_rear_roi.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
