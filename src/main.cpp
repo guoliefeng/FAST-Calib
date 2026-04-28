@@ -43,7 +43,7 @@ int main(int argc, char **argv)
     switch (dataPreprocessPtr->lidar_type_)
     {
         case LiDARType::Solid:
-            lidarDetectPtr->detect_solid_lidar(cloud_input, lidar_center_cloud);
+            lidarDetectPtr->detect_solid_lidar(cloud_input, lidar_center_cloud, qr_center_cloud);
             break;
 
         case LiDARType::Mech:

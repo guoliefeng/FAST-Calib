@@ -17,6 +17,7 @@ which is included as part of this source code package.
 #include <algorithm>
 #include <limits>
 #include <random>
+#include <unordered_map>
 #include "common_lib.h"
 
 class LidarDetect
@@ -24,6 +25,10 @@ class LidarDetect
 private:
     double x_min_, x_max_, y_min_, y_max_, z_min_, z_max_;
     double circle_radius_, delta_width_circles_, delta_height_circles_;
+    bool airy_hole_detector_;
+    double airy_boundary_radius_;
+    double airy_boundary_min_angular_gap_;
+    int airy_boundary_min_neighbors_;
 
     // 存储中间结果的点云
     pcl::PointCloud<Common::Point>::Ptr filtered_cloud_;
@@ -419,6 +424,120 @@ private:
         return best;
     }
 
+    pcl::PointCloud<pcl::PointXYZ>::Ptr extractAiryHoleBoundaryCandidates(
+        const pcl::PointCloud<pcl::PointXYZ>::Ptr &aligned_plane) const
+    {
+        pcl::PointCloud<pcl::PointXYZ>::Ptr out(new pcl::PointCloud<pcl::PointXYZ>);
+        if (!airy_hole_detector_ || !aligned_plane || aligned_plane->empty())
+        {
+            return out;
+        }
+
+        const double search_r = std::max(0.020, airy_boundary_radius_);
+        const double search_r2 = search_r * search_r;
+        const int min_neighbors = std::max(3, airy_boundary_min_neighbors_);
+        const double min_gap = std::max(1.2, airy_boundary_min_angular_gap_);
+
+        out->reserve(aligned_plane->size());
+        for (int i = 0; i < static_cast<int>(aligned_plane->size()); ++i)
+        {
+            const auto &p = aligned_plane->points[i];
+            std::vector<double> angles;
+            angles.reserve(64);
+            int neighbors = 0;
+
+            for (int j = 0; j < static_cast<int>(aligned_plane->size()); ++j)
+            {
+                if (i == j)
+                {
+                    continue;
+                }
+                const auto &q = aligned_plane->points[j];
+                const double dx = static_cast<double>(q.x) - static_cast<double>(p.x);
+                const double dy = static_cast<double>(q.y) - static_cast<double>(p.y);
+                const double d2 = dx * dx + dy * dy;
+                if (d2 <= 1e-10 || d2 > search_r2)
+                {
+                    continue;
+                }
+                ++neighbors;
+                angles.push_back(std::atan2(dy, dx));
+            }
+
+            if (neighbors < min_neighbors || angles.size() < 3)
+            {
+                continue;
+            }
+
+            std::sort(angles.begin(), angles.end());
+            double max_gap = 0.0;
+            for (size_t k = 1; k < angles.size(); ++k)
+            {
+                max_gap = std::max(max_gap, angles[k] - angles[k - 1]);
+            }
+            max_gap = std::max(max_gap, angles.front() + 2.0 * M_PI - angles.back());
+
+            if (max_gap >= min_gap)
+            {
+                out->push_back(p);
+            }
+        }
+
+        ROS_INFO("[Airy] Boundary candidates by angular gap: %zu / %zu",
+                 out->size(), aligned_plane->size());
+        return out;
+    }
+
+    bool selectAndBackProjectCircleCenters(const std::vector<CircleCandidate> &circle_candidates,
+                                           const Eigen::Matrix3d &R_inv,
+                                           double average_z,
+                                           const pcl::PointCloud<pcl::PointXYZ>::Ptr &qr_reference,
+                                           pcl::PointCloud<pcl::PointXYZ>::Ptr center_cloud) const
+    {
+        center_z0_cloud_->clear();
+        for (const auto &candidate : circle_candidates)
+        {
+            center_z0_cloud_->push_back(candidate.center);
+        }
+
+        ROS_INFO("[LiDAR] Circle candidates found: %zu", circle_candidates.size());
+        for (size_t i = 0; i < circle_candidates.size(); ++i)
+        {
+            ROS_INFO("[LiDAR]   candidate %zu: center=(%.4f, %.4f), r=%.4f, inliers=%d",
+                     i,
+                     circle_candidates[i].center.x,
+                     circle_candidates[i].center.y,
+                     circle_candidates[i].radius,
+                     circle_candidates[i].inliers);
+        }
+
+        CandidateScore best_candidate = selectBestCandidateGroup(
+            circle_candidates, R_inv, average_z, qr_reference);
+        if (!best_candidate.found)
+        {
+            ROS_WARN("[LiDAR] Unable to find a candidate set that matches target's geometry");
+            return false;
+        }
+
+        ROS_INFO("[LiDAR] Selected circle group: rmse=%.4f, geom_score=%.4f, geom_valid=%s, support=%d",
+                 best_candidate.rmse,
+                 best_candidate.geom_score,
+                 best_candidate.geom_valid ? "true" : "false",
+                 best_candidate.support);
+
+        center_cloud->clear();
+        for (const int idx : best_candidate.group)
+        {
+            const pcl::PointXYZ &center = circle_candidates[idx].center;
+            Eigen::Vector3d aligned_point(center.x, center.y, center.z + average_z);
+            Eigen::Vector3d original_point = R_inv * aligned_point;
+            center_cloud->push_back(pcl::PointXYZ(original_point.x(),
+                                                  original_point.y(),
+                                                  original_point.z()));
+        }
+        return center_cloud->size() == TARGET_NUM_CIRCLES;
+    }
+
 public:
     ros::Publisher filtered_pub_;
     ros::Publisher plane_pub_;
@@ -443,6 +562,10 @@ public:
         circle_radius_ = params.circle_radius;
         delta_width_circles_ = params.delta_width_circles;
         delta_height_circles_ = params.delta_height_circles;
+        airy_hole_detector_ = params.airy_hole_detector;
+        airy_boundary_radius_ = params.airy_boundary_radius;
+        airy_boundary_min_angular_gap_ = params.airy_boundary_min_angular_gap;
+        airy_boundary_min_neighbors_ = params.airy_boundary_min_neighbors;
 
         filtered_pub_ = nh.advertise<sensor_msgs::PointCloud2>("filtered_cloud", 1);
         plane_pub_ = nh.advertise<sensor_msgs::PointCloud2>("plane_cloud", 1);
@@ -667,7 +790,9 @@ public:
         }
     }
 
-    void detect_solid_lidar(pcl::PointCloud<Common::Point>::Ptr cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr center_cloud)
+    void detect_solid_lidar(pcl::PointCloud<Common::Point>::Ptr cloud,
+                            pcl::PointCloud<pcl::PointXYZ>::Ptr center_cloud,
+                            const pcl::PointCloud<pcl::PointXYZ>::Ptr &qr_reference = pcl::PointCloud<pcl::PointXYZ>::Ptr())
     {
         // 1. X、Y、Z方向滤波
         filtered_cloud_->reserve(cloud->size());
@@ -763,6 +888,21 @@ public:
             cnt++;
         }
         average_z /= cnt;
+
+        // 4. Airy/solid-LiDAR robust hole-boundary detector. It runs before
+        // the legacy normal-boundary path; if it cannot produce four centers,
+        // the original detector below remains the fallback.
+        pcl::PointCloud<pcl::PointXYZ>::Ptr airy_edge_cloud =
+            extractAiryHoleBoundaryCandidates(aligned_cloud_);
+        if (airy_edge_cloud->size() >= 8)
+        {
+            std::vector<CircleCandidate> airy_candidates = detectCircleCandidates(airy_edge_cloud);
+            if (selectAndBackProjectCircleCenters(airy_candidates, R.inverse(), average_z, qr_reference, center_cloud))
+            {
+                *edge_cloud_ = *airy_edge_cloud;
+                return;
+            }
+        }
 
         // 4. 提取边缘点
         edge_cloud_->reserve(aligned_cloud_->size());

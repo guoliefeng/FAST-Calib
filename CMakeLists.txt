@@ -50,5 +50,7 @@ catkin_install_python(PROGRAMS
   scripts/run_four_calib_jobs.py
   scripts/detect_airy_left_rear_roi.py
   scripts/run_vehicle_calib.py
+  scripts/inspect_lidar_centers.py
+  scripts/recompute_extrinsic_from_manual_centers.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

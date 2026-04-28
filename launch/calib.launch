@@ -16,6 +16,10 @@
 	<arg name="y_max" default="" />
 	<arg name="z_min" default="" />
 	<arg name="z_max" default="" />
+	<arg name="airy_hole_detector" default="true" />
+	<arg name="airy_boundary_radius" default="" />
+	<arg name="airy_boundary_min_angular_gap" default="" />
+	<arg name="airy_boundary_min_neighbors" default="" />
 
 	<rosparam file="$(arg config_file)" command="load" subst_value="true"/>
 	<param if="$(eval arg('pointcloud_source') != '')" name="pointcloud_source" value="$(arg pointcloud_source)" />
@@ -31,6 +35,10 @@
 	<param if="$(eval arg('y_max') != '')" name="y_max" value="$(arg y_max)" />
 	<param if="$(eval arg('z_min') != '')" name="z_min" value="$(arg z_min)" />
 	<param if="$(eval arg('z_max') != '')" name="z_max" value="$(arg z_max)" />
+	<param name="airy_hole_detector" value="$(arg airy_hole_detector)" />
+	<param if="$(eval arg('airy_boundary_radius') != '')" name="airy_boundary_radius" value="$(arg airy_boundary_radius)" />
+	<param if="$(eval arg('airy_boundary_min_angular_gap') != '')" name="airy_boundary_min_angular_gap" value="$(arg airy_boundary_min_angular_gap)" />
+	<param if="$(eval arg('airy_boundary_min_neighbors') != '')" name="airy_boundary_min_neighbors" value="$(arg airy_boundary_min_neighbors)" />
 
 	<node pkg="fast_calib" type="fast_calib" name="fast_calib" output="screen">
 	</node>

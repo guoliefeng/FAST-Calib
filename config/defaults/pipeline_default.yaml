@@ -8,7 +8,18 @@ layout:
 extract_pcd:
   enabled: true
   topic_policy: unique
-  frame: middle
+  # Export policy for bag -> PCD.
+  #
+  # Previous behavior used a single frame, usually "middle".
+  # For sparse LiDARs such as Airy, a single frame often does not contain
+  # enough samples around the four circular holes. Use "all" to accumulate
+  # all frames from each bag into one PCD.
+  #
+  # Supported values:
+  #   all, middle, last, or an integer frame index.
+  frame: all
+  frame_stride: 1
+  max_frames: 0
   overwrite: false
 fast_calib:
   package: fast_calib

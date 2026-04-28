@@ -140,6 +140,18 @@ def frame_idx(sel, count):
     i = int(s)
     return count + i if i < 0 else i
 
+def selected_frame_indices(sel, count, stride=1, max_frames=0):
+    """Return frame indices to export from one bag topic."""
+    stride = max(1, int(stride or 1))
+    max_frames = max(0, int(max_frames or 0))
+    s = str(sel).lower()
+    if s in ("all", "accumulate", "merged", "merge", "stack"):
+        idx = list(range(0, count, stride))
+        if max_frames > 0:
+            idx = idx[:max_frames]
+        return idx
+    return [frame_idx(sel, count)]
+
 def read_msg(bag_path, topic, count, frame):
     rosbag, _ = ros_imports()
     target = frame_idx(frame, count)
@@ -147,6 +159,18 @@ def read_msg(bag_path, topic, count, frame):
         for i, (_, msg, _) in enumerate(bag.read_messages(topics=[topic])):
             if i == target: return msg, i
     raise RuntimeError("target frame not found")
+
+def read_msgs(bag_path, topic, count, frame, stride=1, max_frames=0):
+    rosbag, _ = ros_imports()
+    targets = set(selected_frame_indices(frame, count, stride=stride, max_frames=max_frames))
+    msgs = []
+    with rosbag.Bag(str(bag_path), "r") as bag:
+        for i, (_, msg, _) in enumerate(bag.read_messages(topics=[topic])):
+            if i in targets:
+                msgs.append((msg, i))
+    if not msgs:
+        raise RuntimeError("target frame(s) not found")
+    return msgs
 
 def pointcloud2_fields(msg):
     names = {f.name for f in msg.fields}
@@ -198,16 +222,37 @@ def stage_extract_pcd(job, groups):
     rows = []
     for g in groups:
         bag = Path(g["bag"]); pcd = Path(g["pcd"]); print(f"[extract] {g['group']}")
-        row = {"group": g["group"], "bag": str(bag), "pcd": str(pcd), "status": "", "topic": "", "type": "", "frame": "", "count": "", "points": "", "error": ""}
+        row = {"group": g["group"], "bag": str(bag), "pcd": str(pcd), "status": "", "topic": "", "type": "", "frame": "", "frame_count": "", "frame_indices": "", "count": "", "points": "", "error": ""}
         try:
             if pcd.exists() and not boolv(cfg.get("overwrite", False), False):
                 row["status"] = "skipped_exists"; rows.append(row); continue
-            info = choose_topic(bag); msg, idx = read_msg(bag, info["topic"], info["count"], cfg.get("frame", "middle"))
-            if info["type"] == "sensor_msgs/PointCloud2": fields = pointcloud2_fields(msg); pts = pointcloud2_rows(msg, fields)
-            else: fields, pts = livox_rows(msg)
+            info = choose_topic(bag)
+            frame_sel = cfg.get("frame", "all")
+            msgs = read_msgs(
+                bag,
+                info["topic"],
+                info["count"],
+                frame_sel,
+                stride=cfg.get("frame_stride", 1),
+                max_frames=cfg.get("max_frames", 0),
+            )
+            fields, pts = None, []
+            for msg, _idx in msgs:
+                if info["type"] == "sensor_msgs/PointCloud2":
+                    if fields is None:
+                        fields = pointcloud2_fields(msg)
+                    pts.extend(pointcloud2_rows(msg, fields))
+                else:
+                    livox_fields, livox_pts = livox_rows(msg)
+                    if fields is None:
+                        fields = livox_fields
+                    pts.extend(livox_pts)
             if not pts: raise RuntimeError("empty selected frame")
             write_ascii_pcd(pcd, fields, pts)
-            row.update(status="ok", topic=info["topic"], type=info["type"], frame=idx, count=info["count"], points=len(pts))
+            row.update(status="ok", topic=info["topic"], type=info["type"],
+                       frame=frame_sel, frame_count=len(msgs),
+                       frame_indices=",".join(str(i) for _, i in msgs),
+                       count=info["count"], points=len(pts))
         except Exception as e:
             row.update(status="failed", error=str(e)); print("  failed", e)
         rows.append(row)
@@ -378,6 +423,9 @@ def run_calib(job, g, roi, out_dir):
         if p.exists():
             p.unlink()
     cmd=["roslaunch",fc.get("package","fast_calib"),fc.get("calib_launch","calib.launch"),"rviz:=false",f"config_file:={fc['config_file']}",f"pointcloud_source:={source}",f"image_path:={img}",f"output_path:={out_dir}","exit_after_save:=true",f"x_min:={roi['x_min']}",f"x_max:={roi['x_max']}",f"y_min:={roi['y_min']}",f"y_max:={roi['y_max']}",f"z_min:={roi['z_min']}",f"z_max:={roi['z_max']}"]
+    for airy_key in ("airy_hole_detector", "airy_boundary_radius", "airy_boundary_min_angular_gap", "airy_boundary_min_neighbors"):
+        if airy_key in fc:
+            cmd.append(f"{airy_key}:={fc[airy_key]}")
     if source == "bag" and fc.get("lidar_topic"):
         cmd.append(f"lidar_topic:={fc['lidar_topic']}")
     cmd.append(("pcd_path:=" if source=="pcd" else "bag_path:=") + str(cloud))

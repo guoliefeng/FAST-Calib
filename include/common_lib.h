@@ -68,6 +68,11 @@ struct Params {
   string lidar_topic;
   string output_path;
   bool exit_after_save;
+  // Solid/Airy LiDAR circular-hole extraction.
+  bool airy_hole_detector;
+  double airy_boundary_radius;
+  double airy_boundary_min_angular_gap;
+  int airy_boundary_min_neighbors;
 };
 
 // 读取参数
@@ -95,6 +100,10 @@ Params loadParameters(ros::NodeHandle &nh) {
   nh.param("lidar_topic", params.lidar_topic, string("/livox/lidar"));
   nh.param("output_path", params.output_path, string("/home/chunran/calib_ws/src/fast_calib/output"));
   nh.param("exit_after_save", params.exit_after_save, false);
+  nh.param("airy_hole_detector", params.airy_hole_detector, true);
+  nh.param("airy_boundary_radius", params.airy_boundary_radius, 0.045);
+  nh.param("airy_boundary_min_angular_gap", params.airy_boundary_min_angular_gap, 2.2);
+  nh.param("airy_boundary_min_neighbors", params.airy_boundary_min_neighbors, 5);
   nh.param("x_min", params.x_min, 1.5);
   nh.param("x_max", params.x_max, 3.0);
   nh.param("y_min", params.y_min, -1.5);
