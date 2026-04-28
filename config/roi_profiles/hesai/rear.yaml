@@ -1,7 +1,7 @@
 roi:
   enabled: true
   profile: hesai_rear
-  coarse: {x_min: 0.80, x_max: 4.60, y_min: -5.10, y_max: 0.20, z_min: -1.40, z_max: 0.55}
+  coarse: {x_min: 0.80, x_max: 4.60, y_min: -5.10, y_max: 0.50, z_min: -1.40, z_max: 0.55}
   padding: {x: 0.15, y: 0.15, z: 0.15}
   robust_quantile: [0.5, 99.5]
   detector:

@@ -34,7 +34,7 @@ roi:
     x_min: 0.8
     x_max: 4.6
     y_min: -5.1
-    y_max: 0.2
+    y_max: 0.5
     z_min: -1.4
     z_max: 0.55
   padding:
