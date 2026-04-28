@@ -426,6 +426,15 @@ def run_calib(job, g, roi, out_dir):
     for airy_key in ("airy_hole_detector", "airy_boundary_radius", "airy_boundary_min_angular_gap", "airy_boundary_min_neighbors"):
         if airy_key in fc:
             cmd.append(f"{airy_key}:={fc[airy_key]}")
+    for airy_template_key in (
+        "airy_template_detector",
+        "airy_template_grid",
+        "airy_template_angle_step_deg",
+        "airy_template_ring_band",
+        "airy_template_min_score",
+    ):
+        if airy_template_key in fc:
+            cmd.append(f"{airy_template_key}:={fc[airy_template_key]}")
     if source == "bag" and fc.get("lidar_topic"):
         cmd.append(f"lidar_topic:={fc['lidar_topic']}")
     cmd.append(("pcd_path:=" if source=="pcd" else "bag_path:=") + str(cloud))

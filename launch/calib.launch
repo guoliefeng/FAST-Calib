@@ -20,6 +20,11 @@
 	<arg name="airy_boundary_radius" default="" />
 	<arg name="airy_boundary_min_angular_gap" default="" />
 	<arg name="airy_boundary_min_neighbors" default="" />
+	<arg name="airy_template_detector" default="true" />
+	<arg name="airy_template_grid" default="" />
+	<arg name="airy_template_angle_step_deg" default="" />
+	<arg name="airy_template_ring_band" default="" />
+	<arg name="airy_template_min_score" default="" />
 
 	<rosparam file="$(arg config_file)" command="load" subst_value="true"/>
 	<param if="$(eval arg('pointcloud_source') != '')" name="pointcloud_source" value="$(arg pointcloud_source)" />
@@ -39,6 +44,11 @@
 	<param if="$(eval arg('airy_boundary_radius') != '')" name="airy_boundary_radius" value="$(arg airy_boundary_radius)" />
 	<param if="$(eval arg('airy_boundary_min_angular_gap') != '')" name="airy_boundary_min_angular_gap" value="$(arg airy_boundary_min_angular_gap)" />
 	<param if="$(eval arg('airy_boundary_min_neighbors') != '')" name="airy_boundary_min_neighbors" value="$(arg airy_boundary_min_neighbors)" />
+	<param name="airy_template_detector" value="$(arg airy_template_detector)" />
+	<param if="$(eval arg('airy_template_grid') != '')" name="airy_template_grid" value="$(arg airy_template_grid)" />
+	<param if="$(eval arg('airy_template_angle_step_deg') != '')" name="airy_template_angle_step_deg" value="$(arg airy_template_angle_step_deg)" />
+	<param if="$(eval arg('airy_template_ring_band') != '')" name="airy_template_ring_band" value="$(arg airy_template_ring_band)" />
+	<param if="$(eval arg('airy_template_min_score') != '')" name="airy_template_min_score" value="$(arg airy_template_min_score)" />
 
 	<node pkg="fast_calib" type="fast_calib" name="fast_calib" output="screen">
 	</node>

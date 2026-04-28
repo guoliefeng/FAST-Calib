@@ -73,6 +73,12 @@ struct Params {
   double airy_boundary_radius;
   double airy_boundary_min_angular_gap;
   int airy_boundary_min_neighbors;
+  // Airy sparse-cloud template matching.
+  bool airy_template_detector;
+  double airy_template_grid;
+  double airy_template_angle_step_deg;
+  double airy_template_ring_band;
+  double airy_template_min_score;
 };
 
 // 读取参数
@@ -104,6 +110,11 @@ Params loadParameters(ros::NodeHandle &nh) {
   nh.param("airy_boundary_radius", params.airy_boundary_radius, 0.045);
   nh.param("airy_boundary_min_angular_gap", params.airy_boundary_min_angular_gap, 2.2);
   nh.param("airy_boundary_min_neighbors", params.airy_boundary_min_neighbors, 5);
+  nh.param("airy_template_detector", params.airy_template_detector, true);
+  nh.param("airy_template_grid", params.airy_template_grid, 0.03);
+  nh.param("airy_template_angle_step_deg", params.airy_template_angle_step_deg, 3.0);
+  nh.param("airy_template_ring_band", params.airy_template_ring_band, 0.025);
+  nh.param("airy_template_min_score", params.airy_template_min_score, 80.0);
   nh.param("x_min", params.x_min, 1.5);
   nh.param("x_max", params.x_max, 3.0);
   nh.param("y_min", params.y_min, -1.5);

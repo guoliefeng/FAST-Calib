@@ -29,6 +29,11 @@ private:
     double airy_boundary_radius_;
     double airy_boundary_min_angular_gap_;
     int airy_boundary_min_neighbors_;
+    bool airy_template_detector_;
+    double airy_template_grid_;
+    double airy_template_angle_step_deg_;
+    double airy_template_ring_band_;
+    double airy_template_min_score_;
 
     // 存储中间结果的点云
     pcl::PointCloud<Common::Point>::Ptr filtered_cloud_;
@@ -424,6 +429,202 @@ private:
         return best;
     }
 
+    bool detectAiryTemplateCenters(const pcl::PointCloud<pcl::PointXYZ>::Ptr &aligned_plane,
+                                   const Eigen::Matrix3d &R_inv,
+                                   double average_z,
+                                   pcl::PointCloud<pcl::PointXYZ>::Ptr center_cloud) const
+    {
+        if (!airy_template_detector_ || !aligned_plane || aligned_plane->empty())
+        {
+            return false;
+        }
+
+        const double r = circle_radius_;
+        const double w = delta_width_circles_;
+        const double h = delta_height_circles_;
+        if (r <= 0.0 || w <= 0.0 || h <= 0.0)
+        {
+            return false;
+        }
+
+        double min_x = std::numeric_limits<double>::infinity();
+        double min_y = std::numeric_limits<double>::infinity();
+        double max_x = -std::numeric_limits<double>::infinity();
+        double max_y = -std::numeric_limits<double>::infinity();
+        for (const auto &p : aligned_plane->points)
+        {
+            min_x = std::min(min_x, static_cast<double>(p.x));
+            min_y = std::min(min_y, static_cast<double>(p.y));
+            max_x = std::max(max_x, static_cast<double>(p.x));
+            max_y = std::max(max_y, static_cast<double>(p.y));
+        }
+
+        const double half_w = 0.5 * w;
+        const double half_h = 0.5 * h;
+        if (max_x - min_x < w * 0.8 || max_y - min_y < h * 0.8)
+        {
+            ROS_WARN("[AiryTemplate] Board-plane extent too small for template search.");
+            return false;
+        }
+
+        const std::vector<Eigen::Vector2d> offsets = {
+            Eigen::Vector2d(-half_w, -half_h),
+            Eigen::Vector2d( half_w, -half_h),
+            Eigen::Vector2d(-half_w,  half_h),
+            Eigen::Vector2d( half_w,  half_h),
+        };
+
+        const double grid = std::max(0.005, airy_template_grid_);
+        const double angle_step = std::max(0.5, airy_template_angle_step_deg_) * M_PI / 180.0;
+        const double band = std::max(0.005, airy_template_ring_band_);
+        const double inner = r * 0.75;
+        const double outer_min = r + 0.035;
+        const double outer_max = r + 0.180;
+        const double far_outer_min = r + 0.180;
+        const double far_outer_max = r + 0.280;
+
+        double best_score = -std::numeric_limits<double>::infinity();
+        double best_cx = 0.0;
+        double best_cy = 0.0;
+        double best_theta = 0.0;
+        int best_inside = 0;
+        int best_ring = 0;
+        int best_outer = 0;
+        int best_far_outer = 0;
+
+        auto evaluate = [&](double cx, double cy, double theta,
+                            int *inside_sum, int *ring_sum,
+                            int *outer_sum, int *far_outer_sum) -> double {
+            const double ct = std::cos(theta);
+            const double st = std::sin(theta);
+            double score = 0.0;
+            int total_inside = 0;
+            int total_ring = 0;
+            int total_outer = 0;
+            int total_far_outer = 0;
+
+            for (const auto &off : offsets)
+            {
+                const double hx = cx + ct * off.x() - st * off.y();
+                const double hy = cy + st * off.x() + ct * off.y();
+
+                int inside = 0;
+                int ring = 0;
+                int outer = 0;
+                int far_outer = 0;
+
+                for (const auto &p : aligned_plane->points)
+                {
+                    const double dx = static_cast<double>(p.x) - hx;
+                    const double dy = static_cast<double>(p.y) - hy;
+                    const double d = std::sqrt(dx * dx + dy * dy);
+                    if (d < inner)
+                    {
+                        ++inside;
+                    }
+                    if (std::fabs(d - r) < band)
+                    {
+                        ++ring;
+                    }
+                    if (d > outer_min && d < outer_max)
+                    {
+                        ++outer;
+                    }
+                    if (d > far_outer_min && d < far_outer_max)
+                    {
+                        ++far_outer;
+                    }
+                }
+
+                score += 3.0 * ring + 0.4 * outer + 0.1 * far_outer - 6.0 * inside;
+                total_inside += inside;
+                total_ring += ring;
+                total_outer += outer;
+                total_far_outer += far_outer;
+            }
+
+            if (inside_sum) *inside_sum = total_inside;
+            if (ring_sum) *ring_sum = total_ring;
+            if (outer_sum) *outer_sum = total_outer;
+            if (far_outer_sum) *far_outer_sum = total_far_outer;
+            return score;
+        };
+
+        auto update_best = [&](double cx, double cy, double theta) {
+            int inside = 0, ring = 0, outer = 0, far_outer = 0;
+            const double score = evaluate(cx, cy, theta, &inside, &ring, &outer, &far_outer);
+            if (score > best_score)
+            {
+                best_score = score;
+                best_cx = cx;
+                best_cy = cy;
+                best_theta = theta;
+                best_inside = inside;
+                best_ring = ring;
+                best_outer = outer;
+                best_far_outer = far_outer;
+            }
+        };
+
+        for (double theta = -M_PI / 2.0; theta <= M_PI / 2.0 + 1e-9; theta += angle_step)
+        {
+            for (double cx = min_x + half_w; cx <= max_x - half_w + 1e-9; cx += grid)
+            {
+                for (double cy = min_y + half_h; cy <= max_y - half_h + 1e-9; cy += grid)
+                {
+                    update_best(cx, cy, theta);
+                }
+            }
+        }
+
+        const double fine_grid = std::max(0.005, grid * 0.5);
+        const double fine_angle = std::max(0.5 * M_PI / 180.0, angle_step * 0.5);
+        const double cx0 = best_cx;
+        const double cy0 = best_cy;
+        const double th0 = best_theta;
+        for (double theta = th0 - angle_step; theta <= th0 + angle_step + 1e-9; theta += fine_angle)
+        {
+            for (double cx = cx0 - grid; cx <= cx0 + grid + 1e-9; cx += fine_grid)
+            {
+                for (double cy = cy0 - grid; cy <= cy0 + grid + 1e-9; cy += fine_grid)
+                {
+                    update_best(cx, cy, theta);
+                }
+            }
+        }
+
+        ROS_INFO("[AiryTemplate] best score=%.3f, center=(%.4f, %.4f), theta=%.2f deg, inside=%d, ring=%d, outer=%d, far_outer=%d",
+                 best_score, best_cx, best_cy, best_theta * 180.0 / M_PI,
+                 best_inside, best_ring, best_outer, best_far_outer);
+
+        if (!std::isfinite(best_score) || best_score < airy_template_min_score_)
+        {
+            ROS_WARN("[AiryTemplate] Reject template: score %.3f < min_score %.3f",
+                     best_score, airy_template_min_score_);
+            return false;
+        }
+
+        const double ct = std::cos(best_theta);
+        const double st = std::sin(best_theta);
+        center_cloud->clear();
+        center_z0_cloud_->clear();
+        for (const auto &off : offsets)
+        {
+            const double hx = best_cx + ct * off.x() - st * off.y();
+            const double hy = best_cy + st * off.x() + ct * off.y();
+            center_z0_cloud_->push_back(pcl::PointXYZ(hx, hy, 0.0f));
+
+            Eigen::Vector3d aligned_point(hx, hy, average_z);
+            Eigen::Vector3d original_point = R_inv * aligned_point;
+            center_cloud->push_back(pcl::PointXYZ(original_point.x(),
+                                                  original_point.y(),
+                                                  original_point.z()));
+        }
+
+        ROS_INFO("[AiryTemplate] Accepted four template centers.");
+        return center_cloud->size() == TARGET_NUM_CIRCLES;
+    }
+
     pcl::PointCloud<pcl::PointXYZ>::Ptr extractAiryHoleBoundaryCandidates(
         const pcl::PointCloud<pcl::PointXYZ>::Ptr &aligned_plane) const
     {
@@ -566,6 +767,11 @@ public:
         airy_boundary_radius_ = params.airy_boundary_radius;
         airy_boundary_min_angular_gap_ = params.airy_boundary_min_angular_gap;
         airy_boundary_min_neighbors_ = params.airy_boundary_min_neighbors;
+        airy_template_detector_ = params.airy_template_detector;
+        airy_template_grid_ = params.airy_template_grid;
+        airy_template_angle_step_deg_ = params.airy_template_angle_step_deg;
+        airy_template_ring_band_ = params.airy_template_ring_band;
+        airy_template_min_score_ = params.airy_template_min_score;
 
         filtered_pub_ = nh.advertise<sensor_msgs::PointCloud2>("filtered_cloud", 1);
         plane_pub_ = nh.advertise<sensor_msgs::PointCloud2>("plane_cloud", 1);
@@ -888,6 +1094,14 @@ public:
             cnt++;
         }
         average_z /= cnt;
+
+        // Airy sparse-cloud template matching should run before boundary
+        // extraction. The boundary path can fit circles to scan-line artifacts,
+        // while the template path searches for the empty four-hole pattern.
+        if (detectAiryTemplateCenters(aligned_cloud_, R.inverse(), average_z, center_cloud))
+        {
+            return;
+        }
 
         // 4. Airy/solid-LiDAR robust hole-boundary detector. It runs before
         // the legacy normal-boundary path; if it cannot produce four centers,

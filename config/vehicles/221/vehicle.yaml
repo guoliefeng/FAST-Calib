@@ -36,3 +36,10 @@ sensors:
     camera_config: config/vehicles/221/cameras/rear_left.yaml
     roi_profile: config/roi_profiles/airy/rear_left.yaml
     lidar_topic: auto
+    fast_calib:
+      lidar_detector_type: airy
+      airy_template_detector: true
+      airy_template_grid: 0.03
+      airy_template_angle_step_deg: 3.0
+      airy_template_ring_band: 0.025
+      airy_template_min_score: 80.0
