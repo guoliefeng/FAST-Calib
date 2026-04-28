@@ -1,8 +1,4 @@
-vehicle_id: "227"
-
-# 227 当前实际有 2 个采集位置：front, rear。
-# front_left / rear_left / rear_right 先保留为占位，后续有数据后只需要改 enabled 和 data_dir。
-
+vehicle_id: '227'
 sensors:
   front:
     enabled: true
@@ -21,6 +17,12 @@ sensors:
     data_dir: null
     camera_config: config/vehicles/227/cameras/front_left.yaml
     roi_profile: config/roi_profiles/hesai/front_left.yaml
+    lidar_topic: auto
+  front_right:
+    enabled: false
+    data_dir: null
+    camera_config: config/vehicles/227/cameras/front_right.yaml
+    roi_profile: config/roi_profiles/airy/front_right.yaml
     lidar_topic: auto
   rear_left:
     enabled: false

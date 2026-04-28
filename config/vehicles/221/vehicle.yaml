@@ -1,32 +1,38 @@
-vehicle_id: "221"
+vehicle_id: '221'
 sensors:
   front:
-    enabled: true
+    enabled: false
     data_dir: /home/glf/dataDisk/calib/0425/data_221
     camera_config: config/vehicles/221/cameras/front.yaml
     roi_profile: config/roi_profiles/hesai/front.yaml
     lidar_topic: auto
   rear:
-    enabled: true
+    enabled: false
     data_dir: /home/glf/dataDisk/calib/0426/data_221_rear
     camera_config: config/vehicles/221/cameras/rear.yaml
     roi_profile: config/roi_profiles/hesai/rear.yaml
     lidar_topic: auto
   front_left:
-    enabled: true
+    enabled: false
     data_dir: /home/glf/dataDisk/calib/0426/data_221_front_left
     camera_config: config/vehicles/221/cameras/front_left.yaml
     roi_profile: config/roi_profiles/hesai/front_left.yaml
     lidar_topic: auto
+  front_right:
+    enabled: false
+    data_dir: /home/glf/dataDisk/calib/0426/data_221_front_right
+    camera_config: config/vehicles/221/cameras/front_right.yaml
+    roi_profile: config/roi_profiles/airy/front_right.yaml
+    lidar_topic: auto
   rear_right:
-    enabled: true
+    enabled: false
     data_dir: /home/glf/dataDisk/calib/0426/data_221_rear_right
     camera_config: config/vehicles/221/cameras/rear_right.yaml
     roi_profile: config/roi_profiles/hesai/rear_right.yaml
     lidar_topic: auto
   rear_left:
-    enabled: false
-    data_dir:
+    enabled: true
+    data_dir: /home/glf/dataDisk/calib/0426/data_221_rear_left
     camera_config: config/vehicles/221/cameras/rear_left.yaml
     roi_profile: config/roi_profiles/hesai/rear_left.yaml
     lidar_topic: auto

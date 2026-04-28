@@ -1,8 +1,8 @@
 roi:
   enabled: true
-  profile: airy_rear_left
+  profile: airy_front_right
 
-  # Airy rear_left ROI, estimated from manually cropped board PCDs.
+  # Airy front_right ROI, estimated from manually cropped board PCDs.
   # Uploaded board crops:
   #   save_data_1,2,3,8,9,10,13,14,15,16,17,18
   #
@@ -16,11 +16,11 @@ roi:
   #   _calib_output/02_roi/board_candidates/*.pcd
   # then tune x/y/z ranges below.
   coarse:
-    x_min: -5
-    x_max: 0.00
+    x_min: -4.40
+    x_max: -1.10
     y_min: -6.00
-    y_max: 0
-    z_min: 2.00
+    y_max: -1.50
+    z_min: -0.45
     z_max: 4.90
 
   padding:
