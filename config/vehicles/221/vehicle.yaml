@@ -34,5 +34,5 @@ sensors:
     enabled: true
     data_dir: /home/glf/dataDisk/calib/0426/data_221_rear_left
     camera_config: config/vehicles/221/cameras/rear_left.yaml
-    roi_profile: config/roi_profiles/hesai/rear_left.yaml
+    roi_profile: config/roi_profiles/airy/rear_left.yaml
     lidar_topic: auto

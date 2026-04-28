@@ -22,6 +22,12 @@ roi:
     y_max: 0
     z_min: 2.00
     z_max: 4.90
+    # x_min: -4.90
+    # x_max: -1.10
+    # y_min: -6.10
+    # y_max: -0.70
+    # z_min: 1.60
+    # z_max: 4.80
 
   padding:
     x: 0.12
