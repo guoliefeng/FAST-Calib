@@ -1,0 +1,61 @@
+layout:
+  group_prefix: save_data_
+  bag_name: 1.bag
+  image_name: img_0001.jpg
+  pcd_name: 1.pcd
+  board_pcd_name: board_candidate.pcd
+extract_pcd:
+  enabled: true
+  topic_policy: unique
+  frame: middle
+  overwrite: false
+fast_calib:
+  package: fast_calib
+  calib_launch: calib.launch
+  pointcloud_source: bag
+  max_single_rmse: 0.08
+  max_multi_rmse: 0.03
+  max_group_rmse: 0.06
+  multi_min_groups: 3
+  multi_mode: robust_max_groups
+  config_file: /home/glf/dataDisk/calib/FAST-Calib_ws/src/FAST-Calib/config/vehicles/227/cameras/front.yaml
+  lidar_topic: velodyne_first
+verify:
+  enabled: true
+  all_groups: true
+  point_radius: 2
+job_name: 227_front
+data_dir: /home/glf/dataDisk/calib/0427/227_front
+output_dir: ${data_dir}/_calib_output
+roi:
+  enabled: true
+  profile: hesai_front
+  coarse:
+    x_min: 0.45
+    x_max: 3.4
+    y_min: -4.25
+    y_max: 0.1
+    z_min: -1.35
+    z_max: 0.45
+  padding:
+    x: 0.15
+    y: 0.15
+    z: 0.15
+  robust_quantile:
+  - 0.5
+  - 99.5
+  detector:
+    cluster_grid: 0.28
+    min_component_points: 50
+    min_coarse_points: 50
+    expected_height: 1.0
+    board_span:
+      x:
+      - 0.3
+      - 3.2
+      y:
+      - 0.05
+      - 3.0
+      z:
+      - 0.3
+      - 1.8

@@ -1,0 +1,4 @@
+roi:
+  enabled: false
+  existing_file: ${output_dir}/02_roi/roi_groups.yaml
+  board_pcd_template: ${output_dir}/02_roi/board_candidates/{group}_board_candidate.pcd

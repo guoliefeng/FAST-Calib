@@ -1,0 +1,18 @@
+# Airy rear-left camera config
+# Airy rear-left known intrinsics.
+fx: 1020.321275
+fy: 1026.490039
+cx: 958.172619
+cy: 522.228574
+k1: -0.289258
+k2: 0.056707
+p1: 0.001357
+p2: -0.000796
+
+# FAST-Calib target parameters
+marker_size: 0.20
+delta_width_qr_center: 0.55
+delta_height_qr_center: 0.35
+delta_width_circles: 0.5
+delta_height_circles: 0.4
+circle_radius: 0.12

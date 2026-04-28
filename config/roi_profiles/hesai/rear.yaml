@@ -1,0 +1,12 @@
+roi:
+  enabled: true
+  profile: hesai_rear
+  coarse: {x_min: 0.80, x_max: 4.60, y_min: -5.10, y_max: 0.20, z_min: -1.40, z_max: 0.55}
+  padding: {x: 0.15, y: 0.15, z: 0.15}
+  robust_quantile: [0.5, 99.5]
+  detector:
+    cluster_grid: 0.28
+    min_component_points: 50
+    min_coarse_points: 50
+    expected_height: 1.0
+    board_span: {x: [0.30, 5.00], y: [0.05, 3.50], z: [0.30, 1.80]}

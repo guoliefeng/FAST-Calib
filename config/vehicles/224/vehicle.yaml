@@ -1,0 +1,36 @@
+vehicle_id: "224"
+
+# 224 当前实际有 3 个采集位置：front, rear, rear_left。
+# front_left / rear_right 先保留为占位，后续有数据后只需要改 enabled 和 data_dir。
+
+sensors:
+  front:
+    enabled: true
+    data_dir: /home/glf/dataDisk/calib/0427/224_front
+    camera_config: config/vehicles/224/cameras/front.yaml
+    roi_profile: config/roi_profiles/hesai/front.yaml
+    lidar_topic: auto
+  rear:
+    enabled: true
+    data_dir: /home/glf/dataDisk/calib/0427/224_rear
+    camera_config: config/vehicles/224/cameras/rear.yaml
+    roi_profile: config/roi_profiles/hesai/rear.yaml
+    lidar_topic: auto
+  rear_left:
+    enabled: true
+    data_dir: /home/glf/dataDisk/calib/0427/224_left_rear
+    camera_config: config/vehicles/224/cameras/rear_left.yaml
+    roi_profile: config/roi_profiles/airy/rear_left.yaml
+    lidar_topic: auto
+  front_left:
+    enabled: false
+    data_dir: null
+    camera_config: config/vehicles/224/cameras/front_left.yaml
+    roi_profile: config/roi_profiles/hesai/front_left.yaml
+    lidar_topic: auto
+  rear_right:
+    enabled: false
+    data_dir: null
+    camera_config: config/vehicles/224/cameras/rear_right.yaml
+    roi_profile: config/roi_profiles/hesai/rear_right.yaml
+    lidar_topic: auto

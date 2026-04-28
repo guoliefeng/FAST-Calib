@@ -1,0 +1,18 @@
+# rear/common camera config
+# Temporary 221 corresponding-position intrinsics; replace with real intrinsics later.
+fx: 1019.539983
+fy: 1020.37116
+cx: 934.13218
+cy: 545.606007
+k1: -0.313954
+k2: 0.070619
+p1: -0.000869
+p2: 0.002769
+
+# FAST-Calib target parameters
+marker_size: 0.20
+delta_width_qr_center: 0.55
+delta_height_qr_center: 0.35
+delta_width_circles: 0.5
+delta_height_circles: 0.4
+circle_radius: 0.12
