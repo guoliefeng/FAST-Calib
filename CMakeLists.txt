@@ -44,6 +44,13 @@ target_link_libraries(multi_fast_calib
   ${OpenCV_LIBRARIES}
 )
 
+add_executable(two_camera_calib src/two_camera_calib.cpp)
+target_link_libraries(two_camera_calib
+  ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+)
+
 catkin_install_python(PROGRAMS
   scripts/batch_calib.py
   scripts/calib_pipeline.py

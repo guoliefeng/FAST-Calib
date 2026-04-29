@@ -1,0 +1,68 @@
+# Two-camera extrinsic calibration config for FAST-Calib.
+# The node estimates T_cam1_cam0 for every pair listed in pair_names:
+#     X_cam1 = T_cam1_cam0 * X_cam0
+# cam0 is the reference camera, cam1 is the target camera.
+
+pair_names: [left_pair]
+
+calib_target:
+  # Same target definition as config/ariy.yaml and src/qr_detect.hpp.
+  dictionary: "DICT_6X6_250"
+  marker_size: 0.20                 # ArUco marker side length, unit: m
+  delta_width_qr_center: 0.55       # Half distance between left/right marker centers, unit: m
+  delta_height_qr_center: 0.35      # Half distance between upper/lower marker centers, unit: m
+  min_detected_markers: 3           # 3 is usually enough for board pose; 4 is stricter
+
+left_pair:
+  output_path: "$(find fast_calib)/output/two_camera/left_pair"
+  cam0:
+    name: "left_cam0_reference"
+    image_path: "/home/glf/dataDisk/calib/c2c/223_left/front.jpg"
+    fx: 1030.06731324
+    fy: 1030.51267838
+    cx: 965.00523357
+    cy: 527.49974735
+    k1: -0.3319521991
+    k2: 0.0867648655
+    p1: 0.0008438102
+    p2: -0.0006867438
+    k3: 0.0
+  cam1:
+    name: "left_cam1_target"
+    image_path: "/home/glf/dataDisk/calib/c2c/223_left/rear.jpg"
+    fx: 1030.06731324
+    fy: 1030.51267838
+    cx: 965.00523357
+    cy: 527.49974735
+    k1: -0.3319521991
+    k2: 0.0867648655
+    p1: 0.0008438102
+    p2: -0.0006867438
+    k3: 0.0
+
+right_pair:
+  output_path: "$(find fast_calib)/output/two_camera/right_pair"
+  cam0:
+    name: "right_cam0_reference"
+    image_path: "$(find fast_calib)/calib_data/two_camera/right/cam0.jpg"
+    fx: 1030.06731324
+    fy: 1030.51267838
+    cx: 965.00523357
+    cy: 527.49974735
+    k1: -0.3319521991
+    k2: 0.0867648655
+    p1: 0.0008438102
+    p2: -0.0006867438
+    k3: 0.0
+  cam1:
+    name: "right_cam1_target"
+    image_path: "$(find fast_calib)/calib_data/two_camera/right/cam1.jpg"
+    fx: 1030.06731324
+    fy: 1030.51267838
+    cx: 965.00523357
+    cy: 527.49974735
+    k1: -0.3319521991
+    k2: 0.0867648655
+    p1: 0.0008438102
+    p2: -0.0006867438
+    k3: 0.0
