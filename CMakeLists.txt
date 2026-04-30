@@ -51,6 +51,13 @@ target_link_libraries(two_camera_calib
   ${OpenCV_LIBRARIES}
 )
 
+add_executable(two_camera_calib_fixed src/two_camera_calib_fixed.cpp)
+target_link_libraries(two_camera_calib_fixed
+  ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+)
+
 catkin_install_python(PROGRAMS
   scripts/batch_calib.py
   scripts/calib_pipeline.py

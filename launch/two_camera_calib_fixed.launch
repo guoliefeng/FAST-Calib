@@ -1,0 +1,14 @@
+<launch>
+  <arg name="config" default="$(find fast_calib)/config/two_camera_left.yaml" />
+
+  <!--
+    Fixed two-camera calibration executable.
+
+    It reads the YAML file path from the private parameter "~config".
+    For configs containing $(find fast_calib) inside data_dir/output_dir, prefer passing
+    an absolute YAML path with absolute data_dir/output_dir.
+  -->
+  <node pkg="fast_calib" type="two_camera_calib_fixed" name="two_camera_calib_fixed" output="screen">
+    <param name="config" value="$(arg config)" />
+  </node>
+</launch>
