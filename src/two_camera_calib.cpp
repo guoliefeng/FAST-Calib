@@ -1,264 +1,396 @@
 /*
-Developer: guoliefeng / FAST-Calib extension
-
-Two-camera extrinsic calibration using the same ArUco board definition as FAST-Calib.
-The estimated transform is:
-    X_cam1 = T_cam1_cam0 * X_cam0
-where cam0 is the reference camera of one pair, and cam1 is the target camera.
-*/
+ * Two-camera extrinsic calibration using the FAST-Calib ArUco target.
+ *
+ * Coordinate convention:
+ *   X_cam1 = T_cam1_cam0 * X_cam0
+ *
+ * Input data convention:
+ *   data_dir/
+ *     pair_0001_cam0.jpg
+ *     pair_0001_cam1.jpg
+ *     pair_0002_cam0.jpg
+ *     pair_0002_cam1.jpg
+ *     ...
+ */
 
 #include <ros/ros.h>
+
 #include <opencv2/opencv.hpp>
 #include <opencv2/aruco.hpp>
-#include <opencv2/core/version.hpp>
 
-#include <XmlRpcValue.h>
-#include <cerrno>
+#include <Eigen/Core>
+#include <Eigen/Dense>
+#include <Eigen/Geometry>
+
+#include <algorithm>
 #include <cmath>
+#include <dirent.h>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <map>
+#include <numeric>
+#include <set>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <vector>
 
-namespace fast_calib
-{
+namespace fast_calib_two_camera {
 
-struct CameraConfig
-{
+constexpr double kRad2Deg = 180.0 / M_PI;
+constexpr double kDeg2Rad = M_PI / 180.0;
+
+struct CameraModel {
   std::string name;
-  std::string image_path;
-  double fx = 0.0;
-  double fy = 0.0;
-  double cx = 0.0;
-  double cy = 0.0;
-  double k1 = 0.0;
-  double k2 = 0.0;
-  double p1 = 0.0;
-  double p2 = 0.0;
-  double k3 = 0.0;
+  cv::Mat K;
+  cv::Mat D;
 };
 
-struct TargetConfig
-{
-  double marker_size = 0.20;
-  double delta_width_qr_center = 0.55;
-  double delta_height_qr_center = 0.35;
-  int min_detected_markers = 3;
+struct TargetModel {
   std::string dictionary = "DICT_6X6_250";
+  double marker_size_m = 0.20;
+  double delta_width_qr_center_m = 0.55;
+  double delta_height_qr_center_m = 0.35;
+  double delta_width_circles_m = 0.50;
+  double delta_height_circles_m = 0.40;
 };
 
-struct PairConfig
-{
+struct RuntimeConfig {
+  int min_detected_markers = 3;
+  bool refine_markers = true;
+  double reproj_rmse_thresh_px = 1.5;
+  double outlier_rot_thresh_deg = 0.5;
+  double outlier_trans_thresh_m = 0.01;
+  int min_valid_pairs = 5;
+};
+
+struct AppConfig {
   std::string pair_name;
-  std::string output_path;
-  CameraConfig cam0;
-  CameraConfig cam1;
+  std::string data_dir;
+  std::string output_dir;
+  CameraModel cam0;
+  CameraModel cam1;
+  TargetModel target;
+  RuntimeConfig runtime;
 };
 
-struct PoseResult
-{
+struct ImagePair {
+  std::string pair_id;
+  std::string cam0_path;
+  std::string cam1_path;
+};
+
+struct BoardGeometry {
+  cv::Ptr<cv::aruco::Dictionary> dictionary;
+  cv::Ptr<cv::aruco::Board> board;
+  std::vector<int> board_ids;
+  std::vector<std::vector<cv::Point3f>> board_corners;
+  std::vector<cv::Point3f> circle_centers_board;
+};
+
+struct BoardDetectionResult {
   bool ok = false;
-  std::vector<int> detected_ids;
-  cv::Mat T_cam_board = cv::Mat::eye(4, 4, CV_64F);
+  int used_markers = 0;
+  std::vector<int> ids;
+  std::vector<std::vector<cv::Point2f>> corners;
   cv::Vec3d rvec = cv::Vec3d(0, 0, 0);
   cv::Vec3d tvec = cv::Vec3d(0, 0, 0);
-  double reprojection_rmse_px = -1.0;
-  cv::Mat debug_image;
+  Eigen::Matrix4d T_cam_board = Eigen::Matrix4d::Identity();
+  std::vector<Eigen::Vector3d> circle_centers_cam;
+  double reproj_rmse_px = -1.0;
+  cv::Mat vis;
+};
+
+struct PairMetric {
+  std::string pair_id;
+  bool detect_ok_cam0 = false;
+  bool detect_ok_cam1 = false;
+  bool hard_valid = false;
+  bool accepted = false;
+  bool outlier = false;
+  int markers_cam0 = 0;
+  int markers_cam1 = 0;
+  double reproj_cam0_px = -1.0;
+  double reproj_cam1_px = -1.0;
+  double rot_err_deg = -1.0;
+  double trans_err_m = -1.0;
+  Eigen::Matrix4d T_cam1_cam0 = Eigen::Matrix4d::Identity();
+  std::vector<Eigen::Vector3d> circle_centers_cam0;
+  std::vector<Eigen::Vector3d> circle_centers_cam1;
 };
 
 template <typename T>
-bool getRequiredParam(const ros::NodeHandle& nh, const std::string& key, T& value)
-{
-  if (!nh.getParam(key, value))
-  {
-    ROS_ERROR_STREAM("[two_camera_calib] Missing required parameter: " << key);
+bool GetRequiredParam(const ros::NodeHandle& nh, const std::string& key, T& value) {
+  if (!nh.getParam(key, value)) {
+    ROS_ERROR_STREAM("Missing required param: " << nh.getNamespace() << "/" << key);
     return false;
   }
   return true;
 }
 
-bool makeDirectoryRecursive(const std::string& path)
-{
+template <typename T>
+void GetOptionalParam(const ros::NodeHandle& nh, const std::string& key, T& value) {
+  nh.param(key, value, value);
+}
+
+bool LoadCameraModel(const ros::NodeHandle& nh, const std::string& prefix, CameraModel& cam) {
+  double fx = 0, fy = 0, cx = 0, cy = 0;
+  double k1 = 0, k2 = 0, p1 = 0, p2 = 0;
+  if (!GetRequiredParam(nh, prefix + "/name", cam.name) ||
+      !GetRequiredParam(nh, prefix + "/fx", fx) ||
+      !GetRequiredParam(nh, prefix + "/fy", fy) ||
+      !GetRequiredParam(nh, prefix + "/cx", cx) ||
+      !GetRequiredParam(nh, prefix + "/cy", cy) ||
+      !GetRequiredParam(nh, prefix + "/k1", k1) ||
+      !GetRequiredParam(nh, prefix + "/k2", k2) ||
+      !GetRequiredParam(nh, prefix + "/p1", p1) ||
+      !GetRequiredParam(nh, prefix + "/p2", p2)) {
+    return false;
+  }
+
+  cam.K = (cv::Mat_<double>(3, 3) << fx, 0.0, cx,
+                                      0.0, fy, cy,
+                                      0.0, 0.0, 1.0);
+  cam.D = (cv::Mat_<double>(1, 5) << k1, k2, p1, p2, 0.0);
+  return true;
+}
+
+bool LoadConfig(const ros::NodeHandle& nh, AppConfig& cfg) {
+  if (!GetRequiredParam(nh, "pair_name", cfg.pair_name) ||
+      !GetRequiredParam(nh, "data_dir", cfg.data_dir) ||
+      !GetRequiredParam(nh, "output_dir", cfg.output_dir)) {
+    return false;
+  }
+  if (!LoadCameraModel(nh, "cam0", cfg.cam0) || !LoadCameraModel(nh, "cam1", cfg.cam1)) {
+    return false;
+  }
+
+  GetOptionalParam(nh, "target/dictionary", cfg.target.dictionary);
+  GetOptionalParam(nh, "target/marker_size_m", cfg.target.marker_size_m);
+  GetOptionalParam(nh, "target/delta_width_qr_center_m", cfg.target.delta_width_qr_center_m);
+  GetOptionalParam(nh, "target/delta_height_qr_center_m", cfg.target.delta_height_qr_center_m);
+  GetOptionalParam(nh, "target/delta_width_circles_m", cfg.target.delta_width_circles_m);
+  GetOptionalParam(nh, "target/delta_height_circles_m", cfg.target.delta_height_circles_m);
+
+  GetOptionalParam(nh, "runtime/min_detected_markers", cfg.runtime.min_detected_markers);
+  GetOptionalParam(nh, "runtime/refine_markers", cfg.runtime.refine_markers);
+  GetOptionalParam(nh, "runtime/reproj_rmse_thresh_px", cfg.runtime.reproj_rmse_thresh_px);
+  GetOptionalParam(nh, "runtime/outlier_rot_thresh_deg", cfg.runtime.outlier_rot_thresh_deg);
+  GetOptionalParam(nh, "runtime/outlier_trans_thresh_m", cfg.runtime.outlier_trans_thresh_m);
+  GetOptionalParam(nh, "runtime/min_valid_pairs", cfg.runtime.min_valid_pairs);
+
+  return true;
+}
+
+bool IsDir(const std::string& path) {
+  struct stat st;
+  return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+bool MakeDirIfNeeded(const std::string& path) {
   if (path.empty()) return false;
+  if (IsDir(path)) return true;
+  if (mkdir(path.c_str(), 0755) == 0) return true;
+  return IsDir(path);
+}
 
+bool MakeDirs(const std::string& path) {
+  if (path.empty()) return false;
   std::string current;
-  for (size_t i = 0; i < path.size(); ++i)
-  {
-    current.push_back(path[i]);
-    if (path[i] != '/' && i + 1 != path.size()) continue;
-
-    if (current.empty() || current == "/") continue;
-    if (::mkdir(current.c_str(), 0755) != 0 && errno != EEXIST)
-    {
-      ROS_ERROR_STREAM("[two_camera_calib] Failed to create directory: " << current
-                       << ", errno=" << errno);
-      return false;
-    }
+  if (path[0] == '/') current = "/";
+  std::stringstream ss(path);
+  std::string item;
+  while (std::getline(ss, item, '/')) {
+    if (item.empty()) continue;
+    if (!current.empty() && current.back() != '/') current += "/";
+    current += item;
+    if (!MakeDirIfNeeded(current)) return false;
   }
   return true;
 }
 
-cv::Mat cameraMatrix(const CameraConfig& cam)
-{
-  return (cv::Mat_<double>(3, 3) << cam.fx, 0.0, cam.cx,
-                                      0.0, cam.fy, cam.cy,
-                                      0.0, 0.0, 1.0);
+std::string JoinPath(const std::string& a, const std::string& b) {
+  if (a.empty()) return b;
+  if (a.back() == '/') return a + b;
+  return a + "/" + b;
 }
 
-cv::Mat distCoeffs(const CameraConfig& cam)
-{
-  return (cv::Mat_<double>(1, 5) << cam.k1, cam.k2, cam.p1, cam.p2, cam.k3);
+std::string BaseName(const std::string& path) {
+  const size_t pos = path.find_last_of('/');
+  return pos == std::string::npos ? path : path.substr(pos + 1);
 }
 
-cv::Ptr<cv::aruco::Dictionary> createDictionary(const std::string& name)
-{
-  if (name == "DICT_4X4_50") return cv::aruco::getPredefinedDictionary(cv::aruco::DICT_4X4_50);
-  if (name == "DICT_5X5_100") return cv::aruco::getPredefinedDictionary(cv::aruco::DICT_5X5_100);
-  if (name == "DICT_6X6_250") return cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_250);
-  if (name == "DICT_7X7_250") return cv::aruco::getPredefinedDictionary(cv::aruco::DICT_7X7_250);
-
-  ROS_WARN_STREAM("[two_camera_calib] Unsupported dictionary '" << name
-                  << "', fallback to DICT_6X6_250.");
-  return cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_250);
+bool HasImageExtension(const std::string& name) {
+  const size_t pos = name.find_last_of('.');
+  if (pos == std::string::npos) return false;
+  std::string ext = name.substr(pos + 1);
+  std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+  return ext == "jpg" || ext == "jpeg" || ext == "png" || ext == "bmp";
 }
 
-cv::Ptr<cv::aruco::Board> createFastCalibBoard(const TargetConfig& target,
-                                                const cv::Ptr<cv::aruco::Dictionary>& dictionary)
-{
-  // Same board layout as src/qr_detect.hpp in FAST-Calib.
-  // Marker order in board coordinates:
-  // 0-------1
-  // |       |
-  // |   C   |
-  // |       |
-  // 3-------2
-  // ArUco IDs: Marker 0 -> 1, Marker 1 -> 2, Marker 2 -> 4, Marker 3 -> 3.
-  std::vector<std::vector<cv::Point3f>> board_corners;
-  board_corners.resize(4);
+bool FileExists(const std::string& path) {
+  struct stat st;
+  return stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+}
 
-  const float half_qr_width = static_cast<float>(target.delta_width_qr_center);
-  const float half_qr_height = static_cast<float>(target.delta_height_qr_center);
-  const float half_marker = static_cast<float>(target.marker_size / 2.0);
+std::vector<ImagePair> CollectImagePairs(const std::string& data_dir) {
+  std::vector<ImagePair> pairs;
+  DIR* dir = opendir(data_dir.c_str());
+  if (!dir) {
+    ROS_ERROR_STREAM("Cannot open data_dir: " << data_dir);
+    return pairs;
+  }
 
-  for (int i = 0; i < 4; ++i)
-  {
+  std::set<std::string> files;
+  while (dirent* entry = readdir(dir)) {
+    std::string name(entry->d_name);
+    if (name == "." || name == "..") continue;
+    if (HasImageExtension(name)) files.insert(name);
+  }
+  closedir(dir);
+
+  const std::string tag = "_cam0";
+  for (const auto& name : files) {
+    const size_t dot = name.find_last_of('.');
+    if (dot == std::string::npos) continue;
+    const std::string stem = name.substr(0, dot);
+    const std::string ext = name.substr(dot);
+    if (stem.size() <= tag.size()) continue;
+    if (stem.substr(stem.size() - tag.size()) != tag) continue;
+
+    const std::string pair_id = stem.substr(0, stem.size() - tag.size());
+    const std::string cam1_name = pair_id + "_cam1" + ext;
+    if (files.count(cam1_name) == 0) {
+      ROS_WARN_STREAM("Cannot find cam1 image for pair_id=" << pair_id << ", skip");
+      continue;
+    }
+    ImagePair pair;
+    pair.pair_id = pair_id;
+    pair.cam0_path = JoinPath(data_dir, name);
+    pair.cam1_path = JoinPath(data_dir, cam1_name);
+    pairs.push_back(pair);
+  }
+
+  std::sort(pairs.begin(), pairs.end(), [](const ImagePair& a, const ImagePair& b) {
+    return a.pair_id < b.pair_id;
+  });
+  return pairs;
+}
+
+cv::Ptr<cv::aruco::Dictionary> CreateDictionary(const std::string& name) {
+  if (name == "DICT_6X6_250") {
+    return cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_250);
+  }
+  throw std::runtime_error("Unsupported ArUco dictionary: " + name +
+                           ". Current FAST-Calib target uses DICT_6X6_250.");
+}
+
+BoardGeometry BuildBoardGeometry(const TargetModel& target) {
+  BoardGeometry geom;
+  geom.dictionary = CreateDictionary(target.dictionary);
+  geom.board_ids = {1, 2, 4, 3};
+  geom.board_corners.resize(4);
+
+  const double width = target.delta_width_qr_center_m;
+  const double height = target.delta_height_qr_center_m;
+  const double circle_width = target.delta_width_circles_m / 2.0;
+  const double circle_height = target.delta_height_circles_m / 2.0;
+
+  for (int i = 0; i < 4; ++i) {
     const int x_qr_center = (i % 3) == 0 ? -1 : 1;
     const int y_qr_center = (i < 2) ? 1 : -1;
-    const float x_center = x_qr_center * half_qr_width;
-    const float y_center = y_qr_center * half_qr_height;
+    const double x_center = x_qr_center * width;
+    const double y_center = y_qr_center * height;
 
-    for (int j = 0; j < 4; ++j)
-    {
+    geom.circle_centers_board.push_back(
+        cv::Point3f(static_cast<float>(x_qr_center * circle_width),
+                    static_cast<float>(y_qr_center * circle_height), 0.0f));
+
+    for (int j = 0; j < 4; ++j) {
       const int x_qr = (j % 3) == 0 ? -1 : 1;
       const int y_qr = (j < 2) ? 1 : -1;
-      board_corners[i].push_back(cv::Point3f(x_center + x_qr * half_marker,
-                                             y_center + y_qr * half_marker,
-                                             0.0f));
+      geom.board_corners[i].push_back(
+          cv::Point3f(static_cast<float>(x_center + x_qr * target.marker_size_m / 2.0),
+                      static_cast<float>(y_center + y_qr * target.marker_size_m / 2.0),
+                      0.0f));
     }
   }
 
-  const std::vector<int> board_ids{1, 2, 4, 3};
-  return cv::aruco::Board::create(board_corners, dictionary, board_ids);
+  geom.board = cv::aruco::Board::create(geom.board_corners, geom.dictionary, geom.board_ids);
+  return geom;
 }
 
-cv::Mat poseToMatrix(const cv::Vec3d& rvec, const cv::Vec3d& tvec)
-{
-  cv::Mat R;
-  cv::Rodrigues(rvec, R);
+Eigen::Matrix4d RtToEigen44(const cv::Vec3d& rvec, const cv::Vec3d& tvec) {
+  cv::Mat R_cv;
+  cv::Rodrigues(rvec, R_cv);
+  R_cv.convertTo(R_cv, CV_64F);
 
-  cv::Mat T = cv::Mat::eye(4, 4, CV_64F);
-  R.copyTo(T(cv::Rect(0, 0, 3, 3)));
-  T.at<double>(0, 3) = tvec[0];
-  T.at<double>(1, 3) = tvec[1];
-  T.at<double>(2, 3) = tvec[2];
+  Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
+  for (int r = 0; r < 3; ++r) {
+    for (int c = 0; c < 3; ++c) {
+      T(r, c) = R_cv.at<double>(r, c);
+    }
+  }
+  T(0, 3) = tvec[0];
+  T(1, 3) = tvec[1];
+  T(2, 3) = tvec[2];
   return T;
 }
 
-std::vector<double> rotationMatrixToRpyDeg(const cv::Mat& R)
-{
-  const double r00 = R.at<double>(0, 0);
-  const double r10 = R.at<double>(1, 0);
-  const double r20 = R.at<double>(2, 0);
-  const double r21 = R.at<double>(2, 1);
-  const double r22 = R.at<double>(2, 2);
+double ComputeReprojectionRmse(const BoardGeometry& geom,
+                               const std::vector<int>& ids,
+                               const std::vector<std::vector<cv::Point2f>>& corners,
+                               const cv::Vec3d& rvec,
+                               const cv::Vec3d& tvec,
+                               const CameraModel& cam) {
+  if (ids.empty()) return -1.0;
 
-  const double roll = std::atan2(r21, r22);
-  const double pitch = std::atan2(-r20, std::sqrt(r00 * r00 + r10 * r10));
-  const double yaw = std::atan2(r10, r00);
-  const double rad_to_deg = 180.0 / M_PI;
-  return {roll * rad_to_deg, pitch * rad_to_deg, yaw * rad_to_deg};
-}
-
-double computeBoardReprojectionRmse(const cv::Ptr<cv::aruco::Board>& board,
-                                    const std::vector<int>& detected_ids,
-                                    const std::vector<std::vector<cv::Point2f>>& detected_corners,
-                                    const cv::Vec3d& rvec,
-                                    const cv::Vec3d& tvec,
-                                    const cv::Mat& K,
-                                    const cv::Mat& D)
-{
-  double sum_square_error = 0.0;
-  int point_count = 0;
-
-  for (size_t detected_idx = 0; detected_idx < detected_ids.size(); ++detected_idx)
-  {
-    const int marker_id = detected_ids[detected_idx];
-    int board_idx = -1;
-    for (size_t i = 0; i < board->ids.size(); ++i)
-    {
-      if (board->ids[i] == marker_id)
-      {
-        board_idx = static_cast<int>(i);
-        break;
-      }
-    }
-    if (board_idx < 0) continue;
+  double sum_sq = 0.0;
+  int n = 0;
+  for (size_t i = 0; i < ids.size(); ++i) {
+    auto it = std::find(geom.board_ids.begin(), geom.board_ids.end(), ids[i]);
+    if (it == geom.board_ids.end()) continue;
+    const int board_idx = static_cast<int>(std::distance(geom.board_ids.begin(), it));
 
     std::vector<cv::Point2f> projected;
-    cv::projectPoints(board->objPoints[board_idx], rvec, tvec, K, D, projected);
-
-    for (size_t j = 0; j < projected.size() && j < detected_corners[detected_idx].size(); ++j)
-    {
-      const cv::Point2f diff = projected[j] - detected_corners[detected_idx][j];
-      sum_square_error += diff.x * diff.x + diff.y * diff.y;
-      ++point_count;
+    cv::projectPoints(geom.board_corners[board_idx], rvec, tvec, cam.K, cam.D, projected);
+    for (size_t j = 0; j < projected.size() && j < corners[i].size(); ++j) {
+      const double dx = projected[j].x - corners[i][j].x;
+      const double dy = projected[j].y - corners[i][j].y;
+      sum_sq += dx * dx + dy * dy;
+      ++n;
     }
   }
-
-  if (point_count == 0) return -1.0;
-  return std::sqrt(sum_square_error / static_cast<double>(point_count));
+  if (n == 0) return -1.0;
+  return std::sqrt(sum_sq / static_cast<double>(n));
 }
 
-void drawAxes(cv::Mat& image, const cv::Mat& K, const cv::Mat& D,
-              const cv::Vec3d& rvec, const cv::Vec3d& tvec, double axis_length)
-{
-#if CV_MAJOR_VERSION >= 4
-  cv::drawFrameAxes(image, K, D, rvec, tvec, static_cast<float>(axis_length));
-#else
-  cv::aruco::drawAxis(image, K, D, rvec, tvec, static_cast<float>(axis_length));
-#endif
-}
-
-PoseResult detectBoardPose(const CameraConfig& cam,
-                           const TargetConfig& target,
-                           const cv::Ptr<cv::aruco::Dictionary>& dictionary,
-                           const cv::Ptr<cv::aruco::Board>& board)
-{
-  PoseResult result;
-  cv::Mat image = cv::imread(cam.image_path, cv::IMREAD_COLOR);
-  if (image.empty())
-  {
-    ROS_ERROR_STREAM("[two_camera_calib] Failed to load image for " << cam.name
-                     << ": " << cam.image_path);
-    return result;
+std::vector<Eigen::Vector3d> TransformCircleCenters(const BoardGeometry& geom,
+                                                    const Eigen::Matrix4d& T_cam_board) {
+  std::vector<Eigen::Vector3d> centers;
+  centers.reserve(geom.circle_centers_board.size());
+  for (const auto& p : geom.circle_centers_board) {
+    Eigen::Vector4d pb(p.x, p.y, p.z, 1.0);
+    Eigen::Vector4d pc = T_cam_board * pb;
+    centers.emplace_back(pc.x(), pc.y(), pc.z());
   }
+  return centers;
+}
 
-  result.debug_image = image.clone();
-  const cv::Mat K = cameraMatrix(cam);
-  const cv::Mat D = distCoeffs(cam);
+bool DetectBoardPose(const cv::Mat& image,
+                     const CameraModel& cam,
+                     const TargetModel& target,
+                     const BoardGeometry& geom,
+                     const RuntimeConfig& runtime,
+                     BoardDetectionResult& out) {
+  out = BoardDetectionResult();
+  if (image.empty()) {
+    return false;
+  }
+  image.copyTo(out.vis);
 
   cv::Ptr<cv::aruco::DetectorParameters> parameters = cv::aruco::DetectorParameters::create();
 #if (CV_MAJOR_VERSION == 3 && CV_MINOR_VERSION <= 2) || CV_MAJOR_VERSION < 3
@@ -270,284 +402,429 @@ PoseResult detectBoardPose(const CameraConfig& cam,
   std::vector<int> ids;
   std::vector<std::vector<cv::Point2f>> corners;
   std::vector<std::vector<cv::Point2f>> rejected;
-  cv::aruco::detectMarkers(image, dictionary, corners, ids, parameters, rejected);
+  cv::aruco::detectMarkers(image, geom.dictionary, corners, ids, parameters, rejected);
 
-#if (CV_MAJOR_VERSION > 3) || (CV_MAJOR_VERSION == 3 && CV_MINOR_VERSION >= 2)
-  if (!ids.empty() && !rejected.empty())
-  {
-    cv::aruco::refineDetectedMarkers(image, board, corners, ids, rejected, K, D);
+#if (CV_MAJOR_VERSION > 3) || (CV_MAJOR_VERSION == 3 && CV_MINOR_VERSION >= 3)
+  if (runtime.refine_markers && !rejected.empty()) {
+    cv::aruco::refineDetectedMarkers(image, geom.board, corners, ids, rejected, cam.K, cam.D);
   }
 #endif
 
-  result.detected_ids = ids;
-  if (!ids.empty())
-  {
-    cv::aruco::drawDetectedMarkers(result.debug_image, corners, ids);
+  if (!ids.empty()) {
+    cv::aruco::drawDetectedMarkers(out.vis, corners, ids);
   }
 
-  std::ostringstream id_stream;
-  for (size_t i = 0; i < ids.size(); ++i)
-  {
-    if (i != 0) id_stream << ",";
-    id_stream << ids[i];
-  }
-  ROS_INFO_STREAM("[two_camera_calib] " << cam.name << " detected marker ids: ["
-                  << id_stream.str() << "]");
+  out.ids = ids;
+  out.corners = corners;
+  out.used_markers = static_cast<int>(ids.size());
 
-  if (static_cast<int>(ids.size()) < target.min_detected_markers)
-  {
-    ROS_ERROR_STREAM("[two_camera_calib] " << cam.name << " detected " << ids.size()
-                     << " markers, but at least " << target.min_detected_markers
-                     << " markers are required.");
-    return result;
-  }
-
-  cv::Vec3d rvec(0, 0, 0), tvec(0, 0, 0);
-#if (CV_MAJOR_VERSION == 3 && CV_MINOR_VERSION <= 2) || CV_MAJOR_VERSION < 3
-  const int valid = cv::aruco::estimatePoseBoard(corners, ids, board, K, D, rvec, tvec);
-#else
-  const int valid = cv::aruco::estimatePoseBoard(corners, ids, board, K, D, rvec, tvec, false);
-#endif
-
-  if (valid <= 0)
-  {
-    ROS_ERROR_STREAM("[two_camera_calib] estimatePoseBoard failed for " << cam.name);
-    return result;
-  }
-
-  result.ok = true;
-  result.rvec = rvec;
-  result.tvec = tvec;
-  result.T_cam_board = poseToMatrix(rvec, tvec);
-  result.reprojection_rmse_px = computeBoardReprojectionRmse(board, ids, corners, rvec, tvec, K, D);
-
-  drawAxes(result.debug_image, K, D, rvec, tvec, target.marker_size);
-  ROS_INFO_STREAM("[two_camera_calib] " << cam.name
-                  << " board reprojection RMSE: " << std::fixed << std::setprecision(3)
-                  << result.reprojection_rmse_px << " px");
-
-  return result;
-}
-
-bool readCameraConfig(const ros::NodeHandle& nh, const std::string& ns, CameraConfig& cam)
-{
-  bool ok = true;
-  ok &= getRequiredParam(nh, ns + "/name", cam.name);
-  ok &= getRequiredParam(nh, ns + "/image_path", cam.image_path);
-  ok &= getRequiredParam(nh, ns + "/fx", cam.fx);
-  ok &= getRequiredParam(nh, ns + "/fy", cam.fy);
-  ok &= getRequiredParam(nh, ns + "/cx", cam.cx);
-  ok &= getRequiredParam(nh, ns + "/cy", cam.cy);
-
-  nh.param(ns + "/k1", cam.k1, 0.0);
-  nh.param(ns + "/k2", cam.k2, 0.0);
-  nh.param(ns + "/p1", cam.p1, 0.0);
-  nh.param(ns + "/p2", cam.p2, 0.0);
-  nh.param(ns + "/k3", cam.k3, 0.0);
-  return ok;
-}
-
-bool readTargetConfig(const ros::NodeHandle& nh, TargetConfig& target)
-{
-  nh.param("calib_target/marker_size", target.marker_size, 0.20);
-  nh.param("calib_target/delta_width_qr_center", target.delta_width_qr_center, 0.55);
-  nh.param("calib_target/delta_height_qr_center", target.delta_height_qr_center, 0.35);
-  nh.param("calib_target/min_detected_markers", target.min_detected_markers, 3);
-  nh.param("calib_target/dictionary", target.dictionary, std::string("DICT_6X6_250"));
-  return true;
-}
-
-bool readPairConfig(const ros::NodeHandle& nh, const std::string& pair_name, PairConfig& pair)
-{
-  pair.pair_name = pair_name;
-  bool ok = true;
-  ok &= getRequiredParam(nh, pair_name + "/output_path", pair.output_path);
-  ok &= readCameraConfig(nh, pair_name + "/cam0", pair.cam0);
-  ok &= readCameraConfig(nh, pair_name + "/cam1", pair.cam1);
-  return ok;
-}
-
-std::vector<std::string> readPairNames(const ros::NodeHandle& nh)
-{
-  std::vector<std::string> pair_names;
-  XmlRpc::XmlRpcValue names;
-  if (!nh.getParam("pair_names", names))
-  {
-    ROS_ERROR_STREAM("[two_camera_calib] Missing required parameter: pair_names");
-    return pair_names;
-  }
-
-  if (names.getType() != XmlRpc::XmlRpcValue::TypeArray)
-  {
-    ROS_ERROR_STREAM("[two_camera_calib] pair_names must be a YAML list, for example: [left_pair, right_pair]");
-    return pair_names;
-  }
-
-  for (int i = 0; i < names.size(); ++i)
-  {
-    if (names[i].getType() != XmlRpc::XmlRpcValue::TypeString)
-    {
-      ROS_ERROR_STREAM("[two_camera_calib] pair_names[" << i << "] is not a string.");
-      continue;
-    }
-    pair_names.push_back(static_cast<std::string>(names[i]));
-  }
-  return pair_names;
-}
-
-void writeMatrixToConsole(const std::string& name, const cv::Mat& T)
-{
-  std::cout << name << " =" << std::endl;
-  std::cout << std::fixed << std::setprecision(6);
-  for (int r = 0; r < T.rows; ++r)
-  {
-    std::cout << "[ ";
-    for (int c = 0; c < T.cols; ++c)
-    {
-      std::cout << std::setw(11) << T.at<double>(r, c);
-      if (c + 1 != T.cols) std::cout << " ";
-    }
-    std::cout << " ]" << std::endl;
-  }
-}
-
-void saveCalibrationYaml(const PairConfig& pair,
-                         const TargetConfig& target,
-                         const PoseResult& cam0_pose,
-                         const PoseResult& cam1_pose,
-                         const cv::Mat& T_cam1_cam0,
-                         const cv::Mat& T_cam0_cam1)
-{
-  const std::string yaml_path = pair.output_path + "/camera_camera_extrinsic.yaml";
-  cv::FileStorage fs(yaml_path, cv::FileStorage::WRITE);
-  if (!fs.isOpened())
-  {
-    ROS_ERROR_STREAM("[two_camera_calib] Failed to write result file: " << yaml_path);
-    return;
-  }
-
-  const std::vector<double> rpy_cam1_cam0 = rotationMatrixToRpyDeg(T_cam1_cam0(cv::Rect(0, 0, 3, 3)));
-  const std::vector<double> rpy_cam0_cam1 = rotationMatrixToRpyDeg(T_cam0_cam1(cv::Rect(0, 0, 3, 3)));
-
-  fs << "pair_name" << pair.pair_name;
-  fs << "definition" << "X_cam1 = T_cam1_cam0 * X_cam0";
-  fs << "cam0_name" << pair.cam0.name;
-  fs << "cam1_name" << pair.cam1.name;
-
-  fs << "calib_target" << "{";
-  fs << "dictionary" << target.dictionary;
-  fs << "marker_size" << target.marker_size;
-  fs << "delta_width_qr_center" << target.delta_width_qr_center;
-  fs << "delta_height_qr_center" << target.delta_height_qr_center;
-  fs << "min_detected_markers" << target.min_detected_markers;
-  fs << "}";
-
-  fs << "cam0_detected_ids" << "[";
-  for (int id : cam0_pose.detected_ids) fs << id;
-  fs << "]";
-  fs << "cam1_detected_ids" << "[";
-  for (int id : cam1_pose.detected_ids) fs << id;
-  fs << "]";
-  fs << "cam0_reprojection_rmse_px" << cam0_pose.reprojection_rmse_px;
-  fs << "cam1_reprojection_rmse_px" << cam1_pose.reprojection_rmse_px;
-
-  fs << "T_cam0_board" << cam0_pose.T_cam_board;
-  fs << "T_cam1_board" << cam1_pose.T_cam_board;
-  fs << "T_cam1_cam0" << T_cam1_cam0;
-  fs << "T_cam0_cam1" << T_cam0_cam1;
-
-  fs << "T_cam1_cam0_translation_xyz_m" << "["
-     << T_cam1_cam0.at<double>(0, 3)
-     << T_cam1_cam0.at<double>(1, 3)
-     << T_cam1_cam0.at<double>(2, 3) << "]";
-  fs << "T_cam1_cam0_rpy_deg" << "[" << rpy_cam1_cam0[0] << rpy_cam1_cam0[1] << rpy_cam1_cam0[2] << "]";
-
-  fs << "T_cam0_cam1_translation_xyz_m" << "["
-     << T_cam0_cam1.at<double>(0, 3)
-     << T_cam0_cam1.at<double>(1, 3)
-     << T_cam0_cam1.at<double>(2, 3) << "]";
-  fs << "T_cam0_cam1_rpy_deg" << "[" << rpy_cam0_cam1[0] << rpy_cam0_cam1[1] << rpy_cam0_cam1[2] << "]";
-  fs.release();
-
-  ROS_INFO_STREAM("[two_camera_calib] Saved result: " << yaml_path);
-}
-
-bool calibratePair(const PairConfig& pair,
-                   const TargetConfig& target,
-                   const cv::Ptr<cv::aruco::Dictionary>& dictionary,
-                   const cv::Ptr<cv::aruco::Board>& board)
-{
-  ROS_INFO_STREAM("================ Two-camera pair: " << pair.pair_name << " ================");
-  ROS_INFO_STREAM("[two_camera_calib] cam0(reference): " << pair.cam0.name);
-  ROS_INFO_STREAM("[two_camera_calib] cam1(target):    " << pair.cam1.name);
-
-  if (!makeDirectoryRecursive(pair.output_path)) return false;
-
-  const PoseResult cam0_pose = detectBoardPose(pair.cam0, target, dictionary, board);
-  const PoseResult cam1_pose = detectBoardPose(pair.cam1, target, dictionary, board);
-  if (!cam0_pose.ok || !cam1_pose.ok)
-  {
-    ROS_ERROR_STREAM("[two_camera_calib] Failed to calibrate pair: " << pair.pair_name);
+  if (static_cast<int>(ids.size()) < runtime.min_detected_markers) {
     return false;
   }
 
-  // estimatePoseBoard returns T_cam_board. Therefore:
-  // X_cam1 = T_cam1_board * inv(T_cam0_board) * X_cam0
-  const cv::Mat T_cam1_cam0 = cam1_pose.T_cam_board * cam0_pose.T_cam_board.inv();
-  const cv::Mat T_cam0_cam1 = T_cam1_cam0.inv();
+  cv::Vec3d rvec(0, 0, 0), tvec(0, 0, 0);
+  std::vector<cv::Vec3d> rvecs, tvecs;
+  cv::aruco::estimatePoseSingleMarkers(corners, target.marker_size_m, cam.K, cam.D, rvecs, tvecs);
 
-  writeMatrixToConsole("T_" + pair.cam1.name + "_from_" + pair.cam0.name, T_cam1_cam0);
-  const std::vector<double> rpy = rotationMatrixToRpyDeg(T_cam1_cam0(cv::Rect(0, 0, 3, 3)));
-  ROS_INFO_STREAM("[two_camera_calib] translation xyz [m]: "
-                  << T_cam1_cam0.at<double>(0, 3) << ", "
-                  << T_cam1_cam0.at<double>(1, 3) << ", "
-                  << T_cam1_cam0.at<double>(2, 3));
-  ROS_INFO_STREAM("[two_camera_calib] rpy [deg]: " << rpy[0] << ", " << rpy[1] << ", " << rpy[2]);
-
-  const std::string cam0_debug_path = pair.output_path + "/" + pair.cam0.name + "_aruco_detect.png";
-  const std::string cam1_debug_path = pair.output_path + "/" + pair.cam1.name + "_aruco_detect.png";
-  cv::imwrite(cam0_debug_path, cam0_pose.debug_image);
-  cv::imwrite(cam1_debug_path, cam1_pose.debug_image);
-  ROS_INFO_STREAM("[two_camera_calib] Saved debug image: " << cam0_debug_path);
-  ROS_INFO_STREAM("[two_camera_calib] Saved debug image: " << cam1_debug_path);
-
-  saveCalibrationYaml(pair, target, cam0_pose, cam1_pose, T_cam1_cam0, T_cam0_cam1);
-  return true;
-}
-
-}  // namespace fast_calib
-
-int main(int argc, char** argv)
-{
-  ros::init(argc, argv, "two_camera_calib");
-  ros::NodeHandle nh;
-
-  fast_calib::TargetConfig target;
-  fast_calib::readTargetConfig(nh, target);
-
-  const std::vector<std::string> pair_names = fast_calib::readPairNames(nh);
-  if (pair_names.empty()) return 1;
-
-  const cv::Ptr<cv::aruco::Dictionary> dictionary = fast_calib::createDictionary(target.dictionary);
-  const cv::Ptr<cv::aruco::Board> board = fast_calib::createFastCalibBoard(target, dictionary);
-
-  int success_count = 0;
-  for (const std::string& pair_name : pair_names)
-  {
-    fast_calib::PairConfig pair;
-    if (!fast_calib::readPairConfig(nh, pair_name, pair))
-    {
-      ROS_ERROR_STREAM("[two_camera_calib] Invalid config for pair: " << pair_name);
-      continue;
+  if (!rvecs.empty()) {
+    cv::Vec3d rvec_sin(0, 0, 0), rvec_cos(0, 0, 0), tvec_sum(0, 0, 0);
+    for (size_t i = 0; i < rvecs.size(); ++i) {
+      cv::aruco::drawAxis(out.vis, cam.K, cam.D, rvecs[i], tvecs[i], 0.1);
+      tvec_sum += tvecs[i];
+      for (int k = 0; k < 3; ++k) {
+        rvec_sin[k] += std::sin(rvecs[i][k]);
+        rvec_cos[k] += std::cos(rvecs[i][k]);
+      }
     }
-
-    if (fast_calib::calibratePair(pair, target, dictionary, board))
-    {
-      ++success_count;
+    const double inv_n = 1.0 / static_cast<double>(rvecs.size());
+    tvec = tvec_sum * inv_n;
+    for (int k = 0; k < 3; ++k) {
+      rvec[k] = std::atan2(rvec_sin[k] * inv_n, rvec_cos[k] * inv_n);
     }
   }
 
-  ROS_INFO_STREAM("[two_camera_calib] Done. Successful pairs: " << success_count
-                  << " / " << pair_names.size());
-  return success_count == static_cast<int>(pair_names.size()) ? 0 : 2;
+  int valid = 0;
+#if (CV_MAJOR_VERSION == 3 && CV_MINOR_VERSION <= 2) || CV_MAJOR_VERSION < 3
+  valid = cv::aruco::estimatePoseBoard(corners, ids, geom.board, cam.K, cam.D, rvec, tvec);
+#else
+  valid = cv::aruco::estimatePoseBoard(corners, ids, geom.board, cam.K, cam.D, rvec, tvec, true);
+#endif
+  if (valid <= 0) {
+    return false;
+  }
+
+  cv::aruco::drawAxis(out.vis, cam.K, cam.D, rvec, tvec, 0.2);
+
+  out.rvec = rvec;
+  out.tvec = tvec;
+  out.T_cam_board = RtToEigen44(rvec, tvec);
+  out.circle_centers_cam = TransformCircleCenters(geom, out.T_cam_board);
+  out.reproj_rmse_px = ComputeReprojectionRmse(geom, ids, corners, rvec, tvec, cam);
+  out.ok = true;
+
+  for (const auto& center : out.circle_centers_cam) {
+    std::vector<cv::Point3f> obj(1);
+    obj[0] = cv::Point3f(static_cast<float>(center.x()),
+                         static_cast<float>(center.y()),
+                         static_cast<float>(center.z()));
+    std::vector<cv::Point2f> uv;
+    cv::projectPoints(obj, cv::Vec3d(0, 0, 0), cv::Vec3d(0, 0, 0), cam.K, cam.D, uv);
+    if (!uv.empty()) {
+      cv::circle(out.vis, uv[0], 5, cv::Scalar(0, 255, 0), -1);
+    }
+  }
+
+  return true;
+}
+
+Eigen::Matrix4d ComputeRelativePose(const BoardDetectionResult& cam0_det,
+                                    const BoardDetectionResult& cam1_det) {
+  return cam1_det.T_cam_board * cam0_det.T_cam_board.inverse();
+}
+
+Eigen::Quaterniond RotationOf(const Eigen::Matrix4d& T) {
+  Eigen::Matrix3d R = T.block<3, 3>(0, 0);
+  Eigen::Quaterniond q(R);
+  q.normalize();
+  return q;
+}
+
+Eigen::Vector3d TranslationOf(const Eigen::Matrix4d& T) {
+  return T.block<3, 1>(0, 3);
+}
+
+double RotationAngleDeg(const Eigen::Matrix3d& R_a, const Eigen::Matrix3d& R_b) {
+  Eigen::Matrix3d dR = R_a.transpose() * R_b;
+  double c = (dR.trace() - 1.0) / 2.0;
+  c = std::max(-1.0, std::min(1.0, c));
+  return std::acos(c) * kRad2Deg;
+}
+
+Eigen::Matrix4d AverageTransforms(const std::vector<PairMetric>& metrics,
+                                  const std::vector<int>& indices) {
+  if (indices.empty()) return Eigen::Matrix4d::Identity();
+
+  const Eigen::Quaterniond q_ref = RotationOf(metrics[indices.front()].T_cam1_cam0);
+  Eigen::Vector4d q_sum(0, 0, 0, 0);
+  Eigen::Vector3d t_sum(0, 0, 0);
+  double w_sum = 0.0;
+
+  for (int idx : indices) {
+    const PairMetric& m = metrics[idx];
+    double weight = 1.0;
+    const double e = std::max(1e-6, 0.5 * (m.reproj_cam0_px + m.reproj_cam1_px));
+    weight = 1.0 / (e * e);
+
+    Eigen::Quaterniond q = RotationOf(m.T_cam1_cam0);
+    if (q.dot(q_ref) < 0.0) q.coeffs() *= -1.0;
+    q_sum += weight * q.coeffs();
+    t_sum += weight * TranslationOf(m.T_cam1_cam0);
+    w_sum += weight;
+  }
+
+  Eigen::Quaterniond q_mean;
+  q_mean.coeffs() = q_sum / std::max(1e-12, w_sum);
+  q_mean.normalize();
+
+  Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
+  T.block<3, 3>(0, 0) = q_mean.toRotationMatrix();
+  T.block<3, 1>(0, 3) = t_sum / std::max(1e-12, w_sum);
+  return T;
+}
+
+Eigen::Vector3d RotationMatrixToRpyDeg(const Eigen::Matrix3d& R) {
+  const double sy = std::sqrt(R(0, 0) * R(0, 0) + R(1, 0) * R(1, 0));
+  const bool singular = sy < 1e-9;
+  double roll = 0.0, pitch = 0.0, yaw = 0.0;
+  if (!singular) {
+    roll = std::atan2(R(2, 1), R(2, 2));
+    pitch = std::atan2(-R(2, 0), sy);
+    yaw = std::atan2(R(1, 0), R(0, 0));
+  } else {
+    roll = std::atan2(-R(1, 2), R(1, 1));
+    pitch = std::atan2(-R(2, 0), sy);
+    yaw = 0.0;
+  }
+  return Eigen::Vector3d(roll * kRad2Deg, pitch * kRad2Deg, yaw * kRad2Deg);
+}
+
+double CircleCrossCheckRmse(const std::vector<PairMetric>& metrics,
+                            const std::vector<int>& accepted_indices,
+                            const Eigen::Matrix4d& T_cam1_cam0) {
+  double sum_sq = 0.0;
+  int n = 0;
+  for (int idx : accepted_indices) {
+    const PairMetric& m = metrics[idx];
+    if (m.circle_centers_cam0.size() != m.circle_centers_cam1.size()) continue;
+    for (size_t i = 0; i < m.circle_centers_cam0.size(); ++i) {
+      Eigen::Vector4d p0(m.circle_centers_cam0[i].x(),
+                         m.circle_centers_cam0[i].y(),
+                         m.circle_centers_cam0[i].z(), 1.0);
+      Eigen::Vector4d p1_pred = T_cam1_cam0 * p0;
+      const Eigen::Vector3d diff = p1_pred.head<3>() - m.circle_centers_cam1[i];
+      sum_sq += diff.squaredNorm();
+      ++n;
+    }
+  }
+  if (n == 0) return -1.0;
+  return std::sqrt(sum_sq / static_cast<double>(n));
+}
+
+double MeanValue(const std::vector<double>& values) {
+  if (values.empty()) return -1.0;
+  return std::accumulate(values.begin(), values.end(), 0.0) / static_cast<double>(values.size());
+}
+
+double StdValue(const std::vector<double>& values) {
+  if (values.size() < 2) return 0.0;
+  const double mean = MeanValue(values);
+  double sum = 0.0;
+  for (double v : values) sum += (v - mean) * (v - mean);
+  return std::sqrt(sum / static_cast<double>(values.size() - 1));
+}
+
+void WriteMatrixYaml(std::ofstream& ofs, const std::string& name, const Eigen::Matrix4d& T) {
+  ofs << name << ":\n";
+  for (int r = 0; r < 4; ++r) {
+    ofs << "  - [";
+    for (int c = 0; c < 4; ++c) {
+      ofs << std::fixed << std::setprecision(10) << T(r, c);
+      if (c != 3) ofs << ", ";
+    }
+    ofs << "]\n";
+  }
+}
+
+void SaveMetricsCsv(const std::string& path, const std::vector<PairMetric>& metrics) {
+  std::ofstream ofs(path);
+  ofs << "pair_id,detect_ok_cam0,detect_ok_cam1,hard_valid,accepted,outlier,"
+      << "markers_cam0,markers_cam1,reproj_cam0_px,reproj_cam1_px,"
+      << "rot_err_deg,trans_err_m,tx,ty,tz\n";
+  for (const auto& m : metrics) {
+    Eigen::Vector3d t = TranslationOf(m.T_cam1_cam0);
+    ofs << m.pair_id << ","
+        << m.detect_ok_cam0 << "," << m.detect_ok_cam1 << ","
+        << m.hard_valid << "," << m.accepted << "," << m.outlier << ","
+        << m.markers_cam0 << "," << m.markers_cam1 << ","
+        << std::fixed << std::setprecision(6)
+        << m.reproj_cam0_px << "," << m.reproj_cam1_px << ","
+        << m.rot_err_deg << "," << m.trans_err_m << ","
+        << t.x() << "," << t.y() << "," << t.z() << "\n";
+  }
+}
+
+void SavePairList(const std::string& path, const std::vector<PairMetric>& metrics, bool accepted) {
+  std::ofstream ofs(path);
+  for (const auto& m : metrics) {
+    if (m.accepted == accepted) ofs << m.pair_id << "\n";
+  }
+}
+
+void SaveResultYaml(const std::string& path,
+                    const AppConfig& cfg,
+                    const Eigen::Matrix4d& T_cam1_cam0,
+                    const std::vector<PairMetric>& metrics,
+                    const std::vector<int>& accepted_indices,
+                    double cross_rmse_m) {
+  std::vector<double> reproj0, reproj1, rot_errs, trans_errs;
+  for (int idx : accepted_indices) {
+    reproj0.push_back(metrics[idx].reproj_cam0_px);
+    reproj1.push_back(metrics[idx].reproj_cam1_px);
+    if (metrics[idx].rot_err_deg >= 0) rot_errs.push_back(metrics[idx].rot_err_deg);
+    if (metrics[idx].trans_err_m >= 0) trans_errs.push_back(metrics[idx].trans_err_m);
+  }
+
+  const Eigen::Matrix4d T_cam0_cam1 = T_cam1_cam0.inverse();
+  const Eigen::Vector3d t = TranslationOf(T_cam1_cam0);
+  const Eigen::Vector3d rpy = RotationMatrixToRpyDeg(T_cam1_cam0.block<3, 3>(0, 0));
+
+  int total = static_cast<int>(metrics.size());
+  int used = static_cast<int>(accepted_indices.size());
+  int rejected = total - used;
+
+  std::ofstream ofs(path);
+  ofs << "pair_name: " << cfg.pair_name << "\n";
+  ofs << "cam0_name: " << cfg.cam0.name << "\n";
+  ofs << "cam1_name: " << cfg.cam1.name << "\n";
+  ofs << "convention: \"X_cam1 = T_cam1_cam0 * X_cam0\"\n";
+  ofs << "target:\n";
+  ofs << "  dictionary: " << cfg.target.dictionary << "\n";
+  ofs << "  marker_size_m: " << cfg.target.marker_size_m << "\n";
+  ofs << "  delta_width_qr_center_m: " << cfg.target.delta_width_qr_center_m << "\n";
+  ofs << "  delta_height_qr_center_m: " << cfg.target.delta_height_qr_center_m << "\n";
+  WriteMatrixYaml(ofs, "T_cam1_cam0", T_cam1_cam0);
+  WriteMatrixYaml(ofs, "T_cam0_cam1", T_cam0_cam1);
+  ofs << "translation_xyz_m: [" << std::fixed << std::setprecision(10)
+      << t.x() << ", " << t.y() << ", " << t.z() << "]\n";
+  ofs << "rpy_deg: [" << rpy.x() << ", " << rpy.y() << ", " << rpy.z() << "]\n";
+  ofs << "rmse:\n";
+  ofs << "  cam0_reproj_px_mean: " << MeanValue(reproj0) << "\n";
+  ofs << "  cam1_reproj_px_mean: " << MeanValue(reproj1) << "\n";
+  ofs << "  crosscheck_circle_rmse_m: " << cross_rmse_m << "\n";
+  ofs << "stats:\n";
+  ofs << "  total_pairs: " << total << "\n";
+  ofs << "  used_pairs: " << used << "\n";
+  ofs << "  rejected_pairs: " << rejected << "\n";
+  ofs << "  rot_err_deg_std: " << StdValue(rot_errs) << "\n";
+  ofs << "  trans_err_m_std: " << StdValue(trans_errs) << "\n";
+  ofs << "files:\n";
+  ofs << "  metrics_csv: " << JoinPath(cfg.output_dir, "per_pair_metrics.csv") << "\n";
+  ofs << "  accepted_pairs: " << JoinPath(cfg.output_dir, "accepted_pairs.txt") << "\n";
+  ofs << "  rejected_pairs: " << JoinPath(cfg.output_dir, "rejected_pairs.txt") << "\n";
+  ofs << "  vis_dir: " << JoinPath(cfg.output_dir, "vis") << "\n";
+}
+
+std::vector<int> CandidateIndices(const std::vector<PairMetric>& metrics) {
+  std::vector<int> idx;
+  for (size_t i = 0; i < metrics.size(); ++i) {
+    if (metrics[i].hard_valid) idx.push_back(static_cast<int>(i));
+  }
+  return idx;
+}
+
+std::vector<int> SelectInliers(std::vector<PairMetric>& metrics,
+                               const std::vector<int>& candidates,
+                               const RuntimeConfig& runtime,
+                               const Eigen::Matrix4d& T_initial) {
+  std::vector<int> accepted;
+  const Eigen::Matrix3d R_initial = T_initial.block<3, 3>(0, 0);
+  const Eigen::Vector3d t_initial = TranslationOf(T_initial);
+
+  for (int idx : candidates) {
+    PairMetric& m = metrics[idx];
+    m.rot_err_deg = RotationAngleDeg(R_initial, m.T_cam1_cam0.block<3, 3>(0, 0));
+    m.trans_err_m = (TranslationOf(m.T_cam1_cam0) - t_initial).norm();
+
+    const bool rot_ok = m.rot_err_deg <= runtime.outlier_rot_thresh_deg;
+    const bool trans_ok = m.trans_err_m <= runtime.outlier_trans_thresh_m;
+    m.outlier = !(rot_ok && trans_ok);
+    m.accepted = !m.outlier;
+    if (m.accepted) accepted.push_back(idx);
+  }
+  return accepted;
+}
+
+}  // namespace fast_calib_two_camera
+
+int main(int argc, char** argv) {
+  ros::init(argc, argv, "two_camera_calib");
+  ros::NodeHandle pnh("~");
+
+  using namespace fast_calib_two_camera;
+
+  AppConfig cfg;
+  if (!LoadConfig(pnh, cfg)) {
+    ROS_ERROR("Failed to load two-camera calibration config.");
+    return 1;
+  }
+
+  if (!MakeDirs(cfg.output_dir) || !MakeDirs(JoinPath(cfg.output_dir, "vis"))) {
+    ROS_ERROR_STREAM("Failed to create output_dir: " << cfg.output_dir);
+    return 1;
+  }
+
+  ROS_INFO_STREAM("Two-camera calibration for pair: " << cfg.pair_name);
+  ROS_INFO_STREAM("data_dir: " << cfg.data_dir);
+  ROS_INFO_STREAM("output_dir: " << cfg.output_dir);
+
+  BoardGeometry geom;
+  try {
+    geom = BuildBoardGeometry(cfg.target);
+  } catch (const std::exception& e) {
+    ROS_ERROR_STREAM(e.what());
+    return 1;
+  }
+
+  std::vector<ImagePair> pairs = CollectImagePairs(cfg.data_dir);
+  if (pairs.empty()) {
+    ROS_ERROR_STREAM("No synchronized image pairs found in: " << cfg.data_dir
+                     << ". Expected names like pair_0001_cam0.jpg and pair_0001_cam1.jpg");
+    return 1;
+  }
+  ROS_INFO_STREAM("Found " << pairs.size() << " image pairs.");
+
+  std::vector<PairMetric> metrics;
+  metrics.reserve(pairs.size());
+
+  for (const auto& pair : pairs) {
+    PairMetric metric;
+    metric.pair_id = pair.pair_id;
+
+    cv::Mat img0 = cv::imread(pair.cam0_path, cv::IMREAD_COLOR);
+    cv::Mat img1 = cv::imread(pair.cam1_path, cv::IMREAD_COLOR);
+    if (img0.empty() || img1.empty()) {
+      ROS_WARN_STREAM("Failed to read images for pair_id=" << pair.pair_id);
+      metrics.push_back(metric);
+      continue;
+    }
+
+    BoardDetectionResult det0, det1;
+    metric.detect_ok_cam0 = DetectBoardPose(img0, cfg.cam0, cfg.target, geom, cfg.runtime, det0);
+    metric.detect_ok_cam1 = DetectBoardPose(img1, cfg.cam1, cfg.target, geom, cfg.runtime, det1);
+    metric.markers_cam0 = det0.used_markers;
+    metric.markers_cam1 = det1.used_markers;
+    metric.reproj_cam0_px = det0.reproj_rmse_px;
+    metric.reproj_cam1_px = det1.reproj_rmse_px;
+
+    const std::string vis0 = JoinPath(JoinPath(cfg.output_dir, "vis"), pair.pair_id + "_cam0_detect.png");
+    const std::string vis1 = JoinPath(JoinPath(cfg.output_dir, "vis"), pair.pair_id + "_cam1_detect.png");
+    if (!det0.vis.empty()) cv::imwrite(vis0, det0.vis);
+    if (!det1.vis.empty()) cv::imwrite(vis1, det1.vis);
+
+    if (metric.detect_ok_cam0 && metric.detect_ok_cam1) {
+      metric.T_cam1_cam0 = ComputeRelativePose(det0, det1);
+      metric.circle_centers_cam0 = det0.circle_centers_cam;
+      metric.circle_centers_cam1 = det1.circle_centers_cam;
+      metric.hard_valid =
+          det0.reproj_rmse_px >= 0 && det1.reproj_rmse_px >= 0 &&
+          det0.reproj_rmse_px <= cfg.runtime.reproj_rmse_thresh_px &&
+          det1.reproj_rmse_px <= cfg.runtime.reproj_rmse_thresh_px;
+    }
+
+    ROS_INFO_STREAM("pair=" << pair.pair_id
+                    << " markers=(" << metric.markers_cam0 << "," << metric.markers_cam1 << ")"
+                    << " reproj=(" << metric.reproj_cam0_px << "," << metric.reproj_cam1_px << ")"
+                    << " hard_valid=" << metric.hard_valid);
+    metrics.push_back(metric);
+  }
+
+  std::vector<int> candidates = CandidateIndices(metrics);
+  if (candidates.empty()) {
+    SaveMetricsCsv(JoinPath(cfg.output_dir, "per_pair_metrics.csv"), metrics);
+    ROS_ERROR("No valid image pair passed the hard reprojection threshold. Check images, intrinsics and target size.");
+    return 2;
+  }
+
+  Eigen::Matrix4d T_initial = AverageTransforms(metrics, candidates);
+  std::vector<int> accepted = SelectInliers(metrics, candidates, cfg.runtime, T_initial);
+  if (static_cast<int>(accepted.size()) < cfg.runtime.min_valid_pairs) {
+    ROS_WARN_STREAM("Only " << accepted.size() << " inlier pairs after outlier rejection, "
+                    << "less than min_valid_pairs=" << cfg.runtime.min_valid_pairs
+                    << ". Use all hard-valid candidates for now, but please collect more data for final delivery.");
+    accepted = candidates;
+    for (int idx : accepted) metrics[idx].accepted = true;
+  }
+
+  Eigen::Matrix4d T_final = AverageTransforms(metrics, accepted);
+  const double cross_rmse = CircleCrossCheckRmse(metrics, accepted, T_final);
+
+  const std::string result_yaml = JoinPath(cfg.output_dir, "result.yaml");
+  const std::string metrics_csv = JoinPath(cfg.output_dir, "per_pair_metrics.csv");
+  SaveResultYaml(result_yaml, cfg, T_final, metrics, accepted, cross_rmse);
+  SaveMetricsCsv(metrics_csv, metrics);
+  SavePairList(JoinPath(cfg.output_dir, "accepted_pairs.txt"), metrics, true);
+  SavePairList(JoinPath(cfg.output_dir, "rejected_pairs.txt"), metrics, false);
+
+  const Eigen::Vector3d t = TranslationOf(T_final);
+  const Eigen::Vector3d rpy = RotationMatrixToRpyDeg(T_final.block<3, 3>(0, 0));
+  ROS_INFO_STREAM("==== Two-camera calibration result ====");
+  ROS_INFO_STREAM("Convention: X_cam1 = T_cam1_cam0 * X_cam0");
+  ROS_INFO_STREAM("T_cam1_cam0:\n" << T_final);
+  ROS_INFO_STREAM("translation_xyz_m = [" << t.x() << ", " << t.y() << ", " << t.z() << "]");
+  ROS_INFO_STREAM("rpy_deg = [" << rpy.x() << ", " << rpy.y() << ", " << rpy.z() << "]");
+  ROS_INFO_STREAM("used_pairs = " << accepted.size() << " / " << metrics.size());
+  ROS_INFO_STREAM("circle_crosscheck_rmse_m = " << cross_rmse);
+  ROS_INFO_STREAM("Saved result to: " << result_yaml);
+
+  return 0;
 }

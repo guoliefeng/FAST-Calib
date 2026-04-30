@@ -1,0 +1,57 @@
+# Single camera-pair calibration config.
+# Convention:
+#   X_cam1 = T_cam1_cam0 * X_cam0
+
+pair_name: "left_pair"
+data_dir: "$(find fast_calib)/calib_data/two_camera/left_pair"
+output_dir: "$(find fast_calib)/output/two_camera/left_pair"
+
+cam0:
+  name: "left_cam0_reference"
+  # Replace by the real intrinsic parameters of cam0.
+  fx: 1030.06731324
+  fy: 1030.51267838
+  cx: 965.00523357
+  cy: 527.49974735
+  k1: -0.3319521991
+  k2: 0.0867648655
+  p1: 0.0008438102
+  p2: -0.0006867438
+
+cam1:
+  name: "left_cam1_target"
+  # Replace by the real intrinsic parameters of cam1.
+  fx: 1030.06731324
+  fy: 1030.51267838
+  cx: 965.00523357
+  cy: 527.49974735
+  k1: -0.3319521991
+  k2: 0.0867648655
+  p1: 0.0008438102
+  p2: -0.0006867438
+
+target:
+  dictionary: "DICT_6X6_250"
+  marker_size_m: 0.20
+  # Half distance between the centers of the left/right ArUco markers.
+  delta_width_qr_center_m: 0.55
+  # Half distance between the centers of the upper/lower ArUco markers.
+  delta_height_qr_center_m: 0.35
+  # These two are only used for circle-center cross-check.
+  delta_width_circles_m: 0.50
+  delta_height_circles_m: 0.40
+
+runtime:
+  min_detected_markers: 3
+  refine_markers: true
+
+  # Hard threshold for accepting one synchronized image pair.
+  reproj_rmse_thresh_px: 1.5
+
+  # Statistical outlier threshold relative to the initial multi-pair estimate.
+  outlier_rot_thresh_deg: 0.5
+  outlier_trans_thresh_m: 0.01
+
+  # Formal calibration should normally use >= 12 good pairs.
+  # The program still runs with fewer pairs, but prints a warning.
+  min_valid_pairs: 5
