@@ -326,6 +326,70 @@ AppConfig readConfigFromYaml(const std::string& config_path) {
   return cfg;
 }
 
+template <typename T>
+bool getRequiredRosParam(const ros::NodeHandle& nh, const std::string& key, T& value) {
+  if (!nh.getParam(key, value)) {
+    ROS_ERROR_STREAM("Missing required private param: " << nh.getNamespace() << "/" << key);
+    return false;
+  }
+  return true;
+}
+
+template <typename T>
+void getOptionalRosParam(const ros::NodeHandle& nh, const std::string& key, T& value) {
+  nh.param(key, value, value);
+}
+
+bool readCameraFromRosParams(const ros::NodeHandle& nh,
+                             const std::string& prefix,
+                             CameraConfig& cam) {
+  if (!getRequiredRosParam(nh, prefix + "/name", cam.name) ||
+      !getRequiredRosParam(nh, prefix + "/fx", cam.fx) ||
+      !getRequiredRosParam(nh, prefix + "/fy", cam.fy) ||
+      !getRequiredRosParam(nh, prefix + "/cx", cam.cx) ||
+      !getRequiredRosParam(nh, prefix + "/cy", cam.cy) ||
+      !getRequiredRosParam(nh, prefix + "/k1", cam.k1) ||
+      !getRequiredRosParam(nh, prefix + "/k2", cam.k2) ||
+      !getRequiredRosParam(nh, prefix + "/p1", cam.p1) ||
+      !getRequiredRosParam(nh, prefix + "/p2", cam.p2)) {
+    return false;
+  }
+
+  getOptionalRosParam(nh, prefix + "/k3", cam.k3);
+  return true;
+}
+
+AppConfig readConfigFromRosParams(const ros::NodeHandle& nh) {
+  AppConfig cfg;
+  if (!getRequiredRosParam(nh, "pair_name", cfg.pair_name) ||
+      !getRequiredRosParam(nh, "data_dir", cfg.data_dir) ||
+      !getRequiredRosParam(nh, "output_dir", cfg.output_dir)) {
+    throw std::runtime_error("Missing required ROS parameters.");
+  }
+
+  if (!readCameraFromRosParams(nh, "cam0", cfg.cam0) ||
+      !readCameraFromRosParams(nh, "cam1", cfg.cam1)) {
+    throw std::runtime_error("Missing required camera ROS parameters.");
+  }
+
+  getOptionalRosParam(nh, "target/dictionary", cfg.target.dictionary);
+  getOptionalRosParam(nh, "target/marker_size_m", cfg.target.marker_size_m);
+  getOptionalRosParam(nh, "target/delta_width_qr_center_m", cfg.target.delta_width_qr_center_m);
+  getOptionalRosParam(nh, "target/delta_height_qr_center_m", cfg.target.delta_height_qr_center_m);
+  getOptionalRosParam(nh, "target/delta_width_circles_m", cfg.target.delta_width_circles_m);
+  getOptionalRosParam(nh, "target/delta_height_circles_m", cfg.target.delta_height_circles_m);
+
+  getOptionalRosParam(nh, "runtime/min_detected_markers", cfg.runtime.min_detected_markers);
+  getOptionalRosParam(nh, "runtime/refine_markers", cfg.runtime.refine_markers);
+  getOptionalRosParam(nh, "runtime/reproj_rmse_thresh_px", cfg.runtime.reproj_rmse_thresh_px);
+  getOptionalRosParam(nh, "runtime/outlier_rot_thresh_deg", cfg.runtime.outlier_rot_thresh_deg);
+  getOptionalRosParam(nh, "runtime/outlier_trans_thresh_m", cfg.runtime.outlier_trans_thresh_m);
+  getOptionalRosParam(nh, "runtime/min_valid_pairs", cfg.runtime.min_valid_pairs);
+  getOptionalRosParam(nh, "runtime/save_debug", cfg.runtime.save_debug);
+
+  return cfg;
+}
+
 int arucoDictionaryId(const std::string& name) {
   // FAST-Calib default.
   if (name == "DICT_6X6_250") return cv::aruco::DICT_6X6_250;
@@ -494,6 +558,31 @@ double computeBoardReprojectionRmse(
   return std::sqrt(sum2 / static_cast<double>(projected.size()));
 }
 
+bool buildBoardCorrespondences(
+    const std::vector<std::vector<cv::Point2f>>& detected_corners,
+    const std::vector<int>& detected_ids,
+    const std::vector<std::vector<cv::Point3f>>& board_corners,
+    const std::vector<int>& board_ids,
+    std::vector<cv::Point3f>& object_points,
+    std::vector<cv::Point2f>& image_points) {
+  object_points.clear();
+  image_points.clear();
+
+  for (size_t i = 0; i < detected_ids.size(); ++i) {
+    auto it = std::find(board_ids.begin(), board_ids.end(), detected_ids[i]);
+    if (it == board_ids.end()) continue;
+    const size_t board_idx = std::distance(board_ids.begin(), it);
+    if (detected_corners[i].size() != 4 || board_corners[board_idx].size() != 4) continue;
+
+    for (int k = 0; k < 4; ++k) {
+      object_points.push_back(board_corners[board_idx][k]);
+      image_points.push_back(detected_corners[i][k]);
+    }
+  }
+
+  return object_points.size() >= 4 && object_points.size() == image_points.size();
+}
+
 PoseResult detectBoardPose(
     const cv::Mat& image_bgr,
     const CameraConfig& cam,
@@ -543,33 +632,23 @@ PoseResult detectBoardPose(
 
   cv::Vec3d rvec(0, 0, 0);
   cv::Vec3d tvec(0, 0, 0);
-
-  // Build a reasonable initial guess from individual markers.
-  std::vector<cv::Vec3d> rvecs, tvecs;
-  cv::aruco::estimatePoseSingleMarkers(corners, target.marker_size_m, K, D, rvecs, tvecs);
-  if (!tvecs.empty()) {
-    cv::Vec3d tsum(0, 0, 0);
-    cv::Vec3d sin_sum(0, 0, 0);
-    cv::Vec3d cos_sum(0, 0, 0);
-    for (size_t i = 0; i < tvecs.size(); ++i) {
-      tsum += tvecs[i];
-      sin_sum += cv::Vec3d(std::sin(rvecs[i][0]), std::sin(rvecs[i][1]), std::sin(rvecs[i][2]));
-      cos_sum += cv::Vec3d(std::cos(rvecs[i][0]), std::cos(rvecs[i][1]), std::cos(rvecs[i][2]));
-    }
-    const double n = static_cast<double>(tvecs.size());
-    tvec = tsum * (1.0 / n);
-    rvec[0] = std::atan2(sin_sum[0] / n, cos_sum[0] / n);
-    rvec[1] = std::atan2(sin_sum[1] / n, cos_sum[1] / n);
-    rvec[2] = std::atan2(sin_sum[2] / n, cos_sum[2] / n);
+  std::vector<cv::Point3f> object_points;
+  std::vector<cv::Point2f> image_points;
+  if (!buildBoardCorrespondences(corners, ids, board_corners, board_ids,
+                                 object_points, image_points)) {
+    return result;
   }
 
-#if (CV_MAJOR_VERSION == 3 && CV_MINOR_VERSION <= 2) || CV_MAJOR_VERSION < 3
-  int valid = cv::aruco::estimatePoseBoard(corners, ids, board, K, D, rvec, tvec);
-#else
-  int valid = cv::aruco::estimatePoseBoard(corners, ids, board, K, D, rvec, tvec, true);
-#endif
+  const bool pnp_ok = cv::solvePnP(object_points,
+                                   image_points,
+                                   K,
+                                   D,
+                                   rvec,
+                                   tvec,
+                                   false,
+                                   cv::SOLVEPNP_ITERATIVE);
 
-  if (valid <= 0) {
+  if (!pnp_ok) {
     return result;
   }
 
@@ -697,6 +776,7 @@ void saveResultYaml(const AppConfig& cfg,
 
   ofs << "pair_name: \"" << cfg.pair_name << "\"\n";
   ofs << "convention: \"X_cam1 = T_cam1_cam0 * X_cam0\"\n";
+  ofs << "method: \"aruco_corners_solvepnp_iterative_no_initial_guess\"\n";
   ofs << "cam0_name: \"" << cfg.cam0.name << "\"\n";
   ofs << "cam1_name: \"" << cfg.cam1.name << "\"\n";
   ofs << "used_pairs: " << used_indices.size() << "\n";
@@ -787,12 +867,20 @@ int main(int argc, char** argv) {
       config_path = argv[1];
     }
 
-    if (config_path.empty()) {
-      ROS_ERROR("Missing config path. Use _config:=/path/to/two_camera.yaml or pass yaml path as argv[1].");
+    AppConfig cfg;
+    if (nh.hasParam("pair_name")) {
+      cfg = readConfigFromRosParams(nh);
+    } else if (!config_path.empty()) {
+      try {
+        cfg = readConfigFromYaml(config_path);
+      } catch (const std::exception& e) {
+        ROS_ERROR_STREAM("OpenCV FileStorage could not read config file: " << e.what());
+        return 1;
+      }
+    } else {
+      ROS_ERROR("Missing config. Load ROS params or pass an OpenCV YAML path.");
       return 1;
     }
-
-    AppConfig cfg = readConfigFromYaml(config_path);
 
     makeDirRecursive(cfg.output_dir);
     const std::string vis_dir = joinPath(cfg.output_dir, "vis");
@@ -906,11 +994,36 @@ int main(int argc, char** argv) {
     if (static_cast<int>(inlier_indices.size()) >= cfg.runtime.min_valid_pairs) {
       used_indices = inlier_indices;
     } else {
+      double max_rot_err = 0.0;
+      double max_trans_err = 0.0;
+      for (int idx : all_indices) {
+        max_rot_err = std::max(max_rot_err, hard_valid_results[idx].rot_err_deg);
+        max_trans_err = std::max(max_trans_err, hard_valid_results[idx].trans_err_m);
+      }
+
+      const double fallback_rot_guard =
+          std::max(3.0, 5.0 * cfg.runtime.outlier_rot_thresh_deg);
+      const double fallback_trans_guard =
+          std::max(0.5, 5.0 * cfg.runtime.outlier_trans_thresh_m);
+      if (max_rot_err > fallback_rot_guard || max_trans_err > fallback_trans_guard) {
+        saveMetricsCsv(hard_valid_results, joinPath(cfg.output_dir, "per_pair_metrics.csv"));
+        ROS_ERROR_STREAM("Only " << inlier_indices.size()
+                         << " inlier pairs after outlier rejection, less than min_valid_pairs="
+                         << cfg.runtime.min_valid_pairs
+                         << ". Hard-valid pairs are mutually inconsistent"
+                         << " (max_rot_err_deg=" << max_rot_err
+                         << ", max_trans_err_m=" << max_trans_err
+                         << "), so no averaged result is written.");
+        return 3;
+      }
+
       ROS_WARN_STREAM("Only " << inlier_indices.size()
                       << " inlier pairs after outlier rejection, less than min_valid_pairs="
                       << cfg.runtime.min_valid_pairs
-                      << ". Use all hard-valid candidates for now. "
-                      << "Collect more data or relax outlier_trans_thresh_m if needed.");
+                      << ". Use all hard-valid candidates because they are still within the consistency guard"
+                      << " (max_rot_err_deg=" << max_rot_err
+                      << ", max_trans_err_m=" << max_trans_err
+                      << "). Collect more data for final delivery.");
       used_indices = all_indices;
 
       for (int idx : used_indices) {

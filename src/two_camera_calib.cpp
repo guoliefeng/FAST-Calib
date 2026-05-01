@@ -368,6 +368,29 @@ double ComputeReprojectionRmse(const BoardGeometry& geom,
   return std::sqrt(sum_sq / static_cast<double>(n));
 }
 
+bool BuildCorrespondences(const BoardGeometry& geom,
+                          const std::vector<int>& ids,
+                          const std::vector<std::vector<cv::Point2f>>& corners,
+                          std::vector<cv::Point3f>& object_points,
+                          std::vector<cv::Point2f>& image_points) {
+  object_points.clear();
+  image_points.clear();
+
+  for (size_t i = 0; i < ids.size(); ++i) {
+    auto it = std::find(geom.board_ids.begin(), geom.board_ids.end(), ids[i]);
+    if (it == geom.board_ids.end()) continue;
+    const int board_idx = static_cast<int>(std::distance(geom.board_ids.begin(), it));
+    if (corners[i].size() != 4 || geom.board_corners[board_idx].size() != 4) continue;
+
+    for (int j = 0; j < 4; ++j) {
+      object_points.push_back(geom.board_corners[board_idx][j]);
+      image_points.push_back(corners[i][j]);
+    }
+  }
+
+  return object_points.size() >= 4 && object_points.size() == image_points.size();
+}
+
 std::vector<Eigen::Vector3d> TransformCircleCenters(const BoardGeometry& geom,
                                                     const Eigen::Matrix4d& T_cam_board) {
   std::vector<Eigen::Vector3d> centers;
@@ -422,34 +445,22 @@ bool DetectBoardPose(const cv::Mat& image,
     return false;
   }
 
-  cv::Vec3d rvec(0, 0, 0), tvec(0, 0, 0);
-  std::vector<cv::Vec3d> rvecs, tvecs;
-  cv::aruco::estimatePoseSingleMarkers(corners, target.marker_size_m, cam.K, cam.D, rvecs, tvecs);
-
-  if (!rvecs.empty()) {
-    cv::Vec3d rvec_sin(0, 0, 0), rvec_cos(0, 0, 0), tvec_sum(0, 0, 0);
-    for (size_t i = 0; i < rvecs.size(); ++i) {
-      cv::aruco::drawAxis(out.vis, cam.K, cam.D, rvecs[i], tvecs[i], 0.1);
-      tvec_sum += tvecs[i];
-      for (int k = 0; k < 3; ++k) {
-        rvec_sin[k] += std::sin(rvecs[i][k]);
-        rvec_cos[k] += std::cos(rvecs[i][k]);
-      }
-    }
-    const double inv_n = 1.0 / static_cast<double>(rvecs.size());
-    tvec = tvec_sum * inv_n;
-    for (int k = 0; k < 3; ++k) {
-      rvec[k] = std::atan2(rvec_sin[k] * inv_n, rvec_cos[k] * inv_n);
-    }
+  std::vector<cv::Point3f> object_points;
+  std::vector<cv::Point2f> image_points;
+  if (!BuildCorrespondences(geom, ids, corners, object_points, image_points)) {
+    return false;
   }
 
-  int valid = 0;
-#if (CV_MAJOR_VERSION == 3 && CV_MINOR_VERSION <= 2) || CV_MAJOR_VERSION < 3
-  valid = cv::aruco::estimatePoseBoard(corners, ids, geom.board, cam.K, cam.D, rvec, tvec);
-#else
-  valid = cv::aruco::estimatePoseBoard(corners, ids, geom.board, cam.K, cam.D, rvec, tvec, true);
-#endif
-  if (valid <= 0) {
+  cv::Vec3d rvec(0, 0, 0), tvec(0, 0, 0);
+  const bool pnp_ok = cv::solvePnP(object_points,
+                                   image_points,
+                                   cam.K,
+                                   cam.D,
+                                   rvec,
+                                   tvec,
+                                   false,
+                                   cv::SOLVEPNP_ITERATIVE);
+  if (!pnp_ok) {
     return false;
   }
 
@@ -647,6 +658,7 @@ void SaveResultYaml(const std::string& path,
   ofs << "cam0_name: " << cfg.cam0.name << "\n";
   ofs << "cam1_name: " << cfg.cam1.name << "\n";
   ofs << "convention: \"X_cam1 = T_cam1_cam0 * X_cam0\"\n";
+  ofs << "method: \"aruco_corners_solvepnp_iterative_no_initial_guess\"\n";
   ofs << "target:\n";
   ofs << "  dictionary: " << cfg.target.dictionary << "\n";
   ofs << "  marker_size_m: " << cfg.target.marker_size_m << "\n";
@@ -656,6 +668,7 @@ void SaveResultYaml(const std::string& path,
   WriteMatrixYaml(ofs, "T_cam0_cam1", T_cam0_cam1);
   ofs << "translation_xyz_m: [" << std::fixed << std::setprecision(10)
       << t.x() << ", " << t.y() << ", " << t.z() << "]\n";
+  ofs << "translation_norm_m: " << t.norm() << "\n";
   ofs << "rpy_deg: [" << rpy.x() << ", " << rpy.y() << ", " << rpy.z() << "]\n";
   ofs << "rmse:\n";
   ofs << "  cam0_reproj_px_mean: " << MeanValue(reproj0) << "\n";
@@ -798,9 +811,35 @@ int main(int argc, char** argv) {
   Eigen::Matrix4d T_initial = AverageTransforms(metrics, candidates);
   std::vector<int> accepted = SelectInliers(metrics, candidates, cfg.runtime, T_initial);
   if (static_cast<int>(accepted.size()) < cfg.runtime.min_valid_pairs) {
+    double max_rot_err = 0.0;
+    double max_trans_err = 0.0;
+    for (int idx : candidates) {
+      max_rot_err = std::max(max_rot_err, metrics[idx].rot_err_deg);
+      max_trans_err = std::max(max_trans_err, metrics[idx].trans_err_m);
+    }
+
+    const double fallback_rot_guard =
+        std::max(3.0, 5.0 * cfg.runtime.outlier_rot_thresh_deg);
+    const double fallback_trans_guard =
+        std::max(0.5, 5.0 * cfg.runtime.outlier_trans_thresh_m);
+    if (max_rot_err > fallback_rot_guard || max_trans_err > fallback_trans_guard) {
+      SaveMetricsCsv(JoinPath(cfg.output_dir, "per_pair_metrics.csv"), metrics);
+      ROS_ERROR_STREAM("Only " << accepted.size()
+                       << " inlier pairs after outlier rejection, less than min_valid_pairs="
+                       << cfg.runtime.min_valid_pairs
+                       << ". Hard-valid pairs are mutually inconsistent"
+                       << " (max_rot_err_deg=" << max_rot_err
+                       << ", max_trans_err_m=" << max_trans_err
+                       << "), so no averaged result is written.");
+      return 3;
+    }
+
     ROS_WARN_STREAM("Only " << accepted.size() << " inlier pairs after outlier rejection, "
                     << "less than min_valid_pairs=" << cfg.runtime.min_valid_pairs
-                    << ". Use all hard-valid candidates for now, but please collect more data for final delivery.");
+                    << ". Use all hard-valid candidates because they are still within the consistency guard"
+                    << " (max_rot_err_deg=" << max_rot_err
+                    << ", max_trans_err_m=" << max_trans_err
+                    << "). Please collect more data for final delivery.");
     accepted = candidates;
     for (int idx : accepted) metrics[idx].accepted = true;
   }
@@ -821,6 +860,7 @@ int main(int argc, char** argv) {
   ROS_INFO_STREAM("Convention: X_cam1 = T_cam1_cam0 * X_cam0");
   ROS_INFO_STREAM("T_cam1_cam0:\n" << T_final);
   ROS_INFO_STREAM("translation_xyz_m = [" << t.x() << ", " << t.y() << ", " << t.z() << "]");
+  ROS_INFO_STREAM("translation_norm_m = " << t.norm());
   ROS_INFO_STREAM("rpy_deg = [" << rpy.x() << ", " << rpy.y() << ", " << rpy.z() << "]");
   ROS_INFO_STREAM("used_pairs = " << accepted.size() << " / " << metrics.size());
   ROS_INFO_STREAM("circle_crosscheck_rmse_m = " << cross_rmse);

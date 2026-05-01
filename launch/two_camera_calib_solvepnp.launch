@@ -1,0 +1,7 @@
+<launch>
+  <arg name="config" default="$(find fast_calib)/config/two_camera_left.yaml" />
+
+  <node pkg="fast_calib" type="two_camera_calib_solvepnp" name="two_camera_calib_solvepnp" output="screen">
+    <rosparam file="$(arg config)" command="load" subst_value="true" />
+  </node>
+</launch>

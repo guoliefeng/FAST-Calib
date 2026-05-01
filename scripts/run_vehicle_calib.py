@@ -8,6 +8,7 @@ Examples:
   python3 scripts/run_vehicle_calib.py --vehicle 221 --dry-run
 """
 import argparse, copy, csv, subprocess, sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 import yaml
@@ -28,6 +29,56 @@ def write_yaml(p: Path, obj: Dict[str, Any]) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("w", encoding="utf-8") as f:
         yaml.safe_dump(obj, f, allow_unicode=True, sort_keys=False)
+
+def fmt_num(v: Any) -> str:
+    if isinstance(v, int):
+        return str(v)
+    try:
+        x = float(v)
+    except Exception:
+        return str(v)
+    return f"{x:.6f}"
+
+def flatten_matrix(m: Any) -> List[Any]:
+    if not isinstance(m, list):
+        return []
+    out: List[Any] = []
+    for row in m:
+        if isinstance(row, list):
+            out.extend(row)
+        else:
+            out.append(row)
+    return out
+
+def one_line_list(values: Any) -> str:
+    return "[" + ", ".join(fmt_num(v) for v in (values or [])) + "]"
+
+def matrix_rows_lines(name: str, matrix: Any, indent: str = "  ") -> List[str]:
+    lines = [f"{indent}{name}:"]
+    for row in (matrix or []):
+        lines.append(f"{indent}  - {one_line_list(row)}")
+    return lines
+
+def write_readable_extrinsics(path: Path, compact: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines: List[str] = []
+    lines.append(f"vehicle_id: {compact.get('vehicle_id', '')}")
+    lines.append("frame_convention:")
+    fc = compact.get("frame_convention", {})
+    lines.append(f"  transform: {fc.get('transform', 'T_cam_lidar')}")
+    lines.append(f"  description: \"{fc.get('description', '')}\"")
+    lines.append("extrinsics:")
+    for sensor, ext in (compact.get("extrinsics") or {}).items():
+        lines.append(f"  {sensor}:")
+        lines.append(f"    status: {ext.get('status', '')}")
+        lines.append(f"    rmse: {fmt_num(ext.get('rmse'))}")
+        lines.extend(matrix_rows_lines("Rcl", ext.get("Rcl"), "    "))
+        lines.append(f"    Rcl_flat: {one_line_list(flatten_matrix(ext.get('Rcl')))}")
+        lines.append(f"    Pcl: {one_line_list(ext.get('Pcl'))}")
+        lines.append(f"    Pcl_xyz: {one_line_list(ext.get('Pcl'))}")
+        lines.extend(matrix_rows_lines("T_cam_lidar", ext.get("T_cam_lidar"), "    "))
+        lines.append(f"    T_cam_lidar_flat: {one_line_list(flatten_matrix(ext.get('T_cam_lidar')))}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 def deep_merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
     out = copy.deepcopy(a)
@@ -117,6 +168,86 @@ def summarize(vehicle: str, sensor: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
     if str(multi.get("status", "")).lower() not in ("ok", ""): warns.append("multi_status_not_ok")
     return {"vehicle":vehicle,"sensor":sensor,"data_dir":cfg["data_dir"],"status":multi.get("status",""),"rmse":multi.get("rmse",""),"four_center_count":len(four),"selected_count":len(selected),"selected_ratio":f"{ratio:.3f}","warnings":",".join(warns),"failed_groups":",".join(bad),"final_extrinsic":str(out/"final_extrinsic.yaml"),"multi_result":str(mpath)}
 
+def camera_info(camera_config: str) -> Dict[str, Any]:
+    cfg_path = rpath(camera_config)
+    cfg = load_yaml(cfg_path) if cfg_path.exists() else {}
+    keys = ("fx", "fy", "cx", "cy", "k1", "k2", "p1", "p2", "k3")
+    return {
+        "config_file": str(cfg_path),
+        "intrinsics": {k: cfg[k] for k in keys if k in cfg},
+    }
+
+def export_vehicle_extrinsics(vehicle: str, names: List[str], sensors: Dict[str, Any], report_dir: Path) -> Path:
+    """Write one downstream-friendly YAML containing all selected sensor extrinsics."""
+    report_dir.mkdir(parents=True, exist_ok=True)
+    out_path = report_dir / f"{vehicle}_extrinsics.yaml"
+    compact_path = report_dir / f"{vehicle}_extrinsics_compact.yaml"
+    readable_path = report_dir / f"{vehicle}_extrinsics_readable.yaml"
+
+    obj: Dict[str, Any] = {
+        "vehicle_id": str(vehicle),
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "frame_convention": {
+            "transform": "T_cam_lidar",
+            "description": "p_cam = Rcl * p_lidar + Pcl; T_cam_lidar maps LiDAR points into the camera frame.",
+        },
+        "sensors": {},
+    }
+    compact: Dict[str, Any] = {
+        "vehicle_id": str(vehicle),
+        "frame_convention": obj["frame_convention"],
+        "extrinsics": {},
+    }
+
+    for sensor in names:
+        cfg = sensors[sensor]
+        data_dir = Path(str(cfg["data_dir"])).expanduser()
+        output_dir = data_dir / "_calib_output"
+        final_path = output_dir / "final_extrinsic.yaml"
+        multi_path = output_dir / "04_multi" / "multi_result.yaml"
+        final = load_yaml(final_path) if final_path.exists() else {}
+
+        status = final.get("status", "missing_result" if not final else "")
+        entry: Dict[str, Any] = {
+            "enabled": bool(cfg.get("enabled", False)),
+            "data_dir": str(data_dir),
+            "output_dir": str(output_dir),
+            "camera": camera_info(str(cfg["camera_config"])),
+            "source_files": {
+                "final_extrinsic": str(final_path),
+                "multi_result": str(multi_path),
+            },
+            "status": status,
+            "rmse": final.get("rmse"),
+            "selected_groups": final.get("selected_groups", []),
+            "Rcl": final.get("Rcl"),
+            "Pcl": final.get("Pcl"),
+            "T_cam_lidar": final.get("T_cam_lidar"),
+            "final_group_residuals": final.get("final_group_residuals", {}),
+        }
+        if not final_path.exists():
+            entry["warning"] = "final_extrinsic.yaml not found"
+        elif str(status).lower() != "ok":
+            entry["warning"] = "calibration status is not ok; inspect rmse and projection before downstream use"
+        obj["sensors"][sensor] = entry
+
+        if final.get("T_cam_lidar") is not None:
+            compact["extrinsics"][sensor] = {
+                "status": status,
+                "rmse": final.get("rmse"),
+                "Rcl": final.get("Rcl"),
+                "Pcl": final.get("Pcl"),
+                "T_cam_lidar": final.get("T_cam_lidar"),
+            }
+
+    write_yaml(out_path, obj)
+    write_readable_extrinsics(compact_path, compact)
+    write_readable_extrinsics(readable_path, compact)
+    print(f"[EXTRINSICS] full   : {out_path}")
+    print(f"[EXTRINSICS] compact: {compact_path}")
+    print(f"[EXTRINSICS] readable: {readable_path}")
+    return out_path
+
 def run_cmd(cmd: List[str], log_path: Path) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     print(" ".join(str(x) for x in cmd))
@@ -130,7 +261,7 @@ def run_cmd(cmd: List[str], log_path: Path) -> int:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--vehicle", required=True)
-    ap.add_argument("--stage", default="all", choices=["all","scan","extract_pcd","roi","calibrate","verify"])
+    ap.add_argument("--stage", default="all", choices=["all","scan","extract_pcd","roi","calibrate","verify","export"])
     ap.add_argument("--sensors", default="", help="comma-separated positions, e.g. front,rear")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--stop-on-error", action="store_true")
@@ -156,6 +287,10 @@ def main():
         print("[DRY RUN] generated job yaml files only."); return
 
     report = REPORT_ROOT / args.vehicle; log_dir = report / "run_logs"; log_dir.mkdir(parents=True, exist_ok=True)
+    if args.stage == "export":
+        export_vehicle_extrinsics(args.vehicle, names, sensors, report)
+        return
+
     codes = {}
     for n in names:
         print("\n" + "="*90); print(f"[RUN] vehicle={args.vehicle}, sensor={n}, stage={args.stage}"); print("="*90)
@@ -169,6 +304,7 @@ def main():
     with summary.open("w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields); w.writeheader(); w.writerows(rows)
     print("\n" + "="*90); print(f"[SUMMARY] {summary}"); print("="*90)
+    export_vehicle_extrinsics(args.vehicle, names, sensors, report)
     failed = {k:v for k,v in codes.items() if v != 0}
     if failed: print(f"[WARN] some sensors failed: {failed}"); sys.exit(1)
 

@@ -7,7 +7,9 @@ layout:
 extract_pcd:
   enabled: true
   topic_policy: unique
-  frame: middle
+  frame: all
+  frame_stride: 1
+  max_frames: 0
   overwrite: false
 fast_calib:
   package: fast_calib
