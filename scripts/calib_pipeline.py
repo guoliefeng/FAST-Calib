@@ -549,12 +549,143 @@ def write_selection_tables(multi_dir, history, selected_groups, per_group):
         for g in sorted(per_group.keys(), key=natural_key):
             w.writerow({"group":g,"selected":g in selected,"multi_group_rmse":ff(per_group[g])})
 
+def write_permutation_tables(multi_dir, records, selected_groups, per_group, permutations):
+    if not permutations:
+        return
+    selected=set(selected_groups or [])
+    with (multi_dir/"group_permutations.csv").open("w",encoding="utf-8",newline="") as f:
+        fields=["group","selected","multi_group_rmse","qr_permutation"]
+        w=csv.DictWriter(f,fieldnames=fields); w.writeheader()
+        for g in sorted(permutations.keys(), key=natural_key):
+            w.writerow({
+                "group":g,
+                "selected":g in selected,
+                "multi_group_rmse":ff(per_group[g]) if g in per_group else "",
+                "qr_permutation":" ".join(str(int(i)) for i in permutations[g]),
+            })
+    with (multi_dir/"all_circle_centers_permuted.csv").open("w",encoding="utf-8",newline="") as f:
+        fields=["group","selected","center_index","qr_original_index",
+                "lidar_x","lidar_y","lidar_z","qr_x","qr_y","qr_z"]
+        w=csv.DictWriter(f,fieldnames=fields); w.writeheader()
+        for g in sorted(records.keys(), key=natural_key):
+            if g not in permutations:
+                continue
+            lidar,qr=records[g]
+            perm=permutations[g]
+            for i, orig_i in enumerate(perm):
+                w.writerow({
+                    "group":g,
+                    "selected":g in selected,
+                    "center_index":i,
+                    "qr_original_index":int(orig_i),
+                    "lidar_x":ff(lidar[i,0]), "lidar_y":ff(lidar[i,1]), "lidar_z":ff(lidar[i,2]),
+                    "qr_x":ff(qr[orig_i,0]), "qr_y":ff(qr[orig_i,1]), "qr_z":ff(qr[orig_i,2]),
+                })
+
 def choose_all_center_records(records, min_groups):
     groups=list(records.keys())
     if len(groups)<min_groups:
         return None
     R,t,rmse,per=eval_groups(records,groups)
     return {"groups":groups,"rmse":rmse,"per_group":per,"R":R,"t":t,"policy":"all_center_records"}
+
+CENTER_PERMS_4 = list(itertools.permutations(range(4)))
+
+def best_qr_permutation(lidar, qr, R, t):
+    pred=(R@lidar.T).T+t
+    best_err=None; best_perm=None
+    for perm in CENTER_PERMS_4:
+        target=qr[list(perm)]
+        err=float(np.sqrt(np.mean(np.linalg.norm(pred-target,axis=1)**2)))
+        if best_err is None or err<best_err:
+            best_err=err; best_perm=perm
+    return best_err,best_perm
+
+def best_permutations_for_transform(records, R, t):
+    rows=[]; perms={}
+    for g,(lidar,qr) in records.items():
+        err,perm=best_qr_permutation(lidar,qr,R,t)
+        rows.append((err,g,perm)); perms[g]=perm
+    rows.sort(key=lambda x:(x[0], natural_key(x[1])))
+    return rows,perms
+
+def eval_groups_with_qr_permutations(records, groups, permutations):
+    a=[]; b=[]
+    for g in groups:
+        lidar,qr=records[g]
+        a.append(lidar)
+        b.append(qr[list(permutations[g])])
+    a=np.vstack(a); b=np.vstack(b)
+    R,t,rmse=svd_solve(a,b)
+    per={}
+    for g in groups:
+        lidar,qr=records[g]
+        target=qr[list(permutations[g])]
+        pred=(R@lidar.T).T+t
+        per[g]=float(np.sqrt(np.mean(np.linalg.norm(pred-target,axis=1)**2)))
+    return R,t,rmse,per
+
+def permutation_candidate(records, seed_R, seed_t, min_groups, max_group_rmse, max_iters=8):
+    R=seed_R; t=seed_t; last_sig=None; groups=None; perms=None
+    for _ in range(max_iters):
+        rows,perms=best_permutations_for_transform(records,R,t)
+        inliers=[g for err,g,_ in rows if err<=max_group_rmse]
+        groups=inliers if len(inliers)>=min_groups else [g for _,g,_ in rows[:min_groups]]
+        sig=(tuple(groups), tuple(tuple(perms[g]) for g in groups))
+        R2,t2,_,_=eval_groups_with_qr_permutations(records,groups,perms)
+        if sig==last_sig:
+            R,t=R2,t2
+            break
+        R,t=R2,t2; last_sig=sig
+
+    rows,perms=best_permutations_for_transform(records,R,t)
+    inliers=[g for err,g,_ in rows if err<=max_group_rmse]
+    groups=inliers if len(inliers)>=min_groups else [g for _,g,_ in rows[:min_groups]]
+    R,t,rmse,per=eval_groups_with_qr_permutations(records,groups,perms)
+    rows,all_perms=best_permutations_for_transform(records,R,t)
+    per_all={g:err for err,g,_ in rows}
+    return {
+        "groups":list(groups),
+        "rmse":rmse,
+        "per_group":per,
+        "per_group_all":per_all,
+        "R":R,
+        "t":t,
+        "policy":"permutation_search",
+        "permutations":{g:perms[g] for g in groups},
+        "best_permutations_all":all_perms,
+        "worst_group":max(per,key=per.get) if per else "",
+        "worst_rmse":max(per.values()) if per else 0.0,
+    }
+
+def choose_permutation_search(records, min_groups, max_multi, max_group_rmse):
+    groups=sorted(records.keys(), key=natural_key)
+    if len(groups)<min_groups:
+        return None, [], []
+    candidates=[]
+    for seed_group in groups:
+        lidar,qr=records[seed_group]
+        for perm in CENTER_PERMS_4:
+            R,t,_=svd_solve(lidar,qr[list(perm)])
+            item=permutation_candidate(records,R,t,min_groups,max_group_rmse)
+            item["seed_group"]=seed_group
+            item["seed_permutation"]=perm
+            candidates.append(item)
+
+    dedup={}
+    for c in candidates:
+        key=(tuple(c["groups"]), tuple((g, tuple(c["permutations"][g])) for g in c["groups"]))
+        old=dedup.get(key)
+        if old is None or c["rmse"]<old["rmse"]:
+            dedup[key]=c
+    candidates=list(dedup.values())
+    valid=[c for c in candidates if c["rmse"]<=max_multi and c["worst_rmse"]<=max_group_rmse]
+    if valid:
+        selected=max(valid, key=lambda c:(len(c["groups"]), -c["rmse"], -c["worst_rmse"]))
+    else:
+        selected=min(candidates, key=lambda c:(c["rmse"], c["worst_rmse"], -len(c["groups"]))) if candidates else None
+    ranked=sorted(candidates, key=lambda c:(-(len(c["groups"])), c["rmse"], c["worst_rmse"]))[:80]
+    return selected, ranked, []
 
 def choose_robust_max_groups(records, min_groups, max_multi, max_group_rmse):
     groups=list(records.keys())
@@ -594,6 +725,8 @@ def choose_multi(records, min_groups, max_multi, mode, max_group_rmse=None):
     if len(groups)<min_groups:
         return None, [], []
     candidates=[]
+    if mode in ("permutation_search", "perm_search", "permutation", "permute_centers", "permutation_robust"):
+        return choose_permutation_search(records, min_groups, max_multi, max_group_rmse)
     if mode in ("robust_max_groups", "robust", "max_consensus", "largest_consensus"):
         return choose_robust_max_groups(records, min_groups, max_multi, max_group_rmse)
     if mode in ("max_groups", "best", "exhaustive"):
@@ -661,9 +794,10 @@ def stage_calibrate(job, groups):
     if selected is None:
         write_yaml(multi/"multi_result.yaml",{"status":"failed","reason":"not_enough_4center_groups","four_center_groups":four_center_groups,"non_four_center_groups":non_four_center_rows})
         return
-    cur=selected["groups"]; R=selected["R"]; t=selected["t"]; rmse=selected["rmse"]; per=selected["per_group"]; per_all=residuals_for_records(records,R,t)
+    cur=selected["groups"]; R=selected["R"]; t=selected["t"]; rmse=selected["rmse"]; per=selected["per_group"]; per_all=selected.get("per_group_all") or residuals_for_records(records,R,t)
     write_center_records(multi, records, rows, cur, per_all)
     write_selection_tables(multi, (candidates if candidates else history_raw), cur, per_all)
+    write_permutation_tables(multi, records, cur, per_all, selected.get("best_permutations_all"))
     history=[
         {"groups":c["groups"],"rmse":ff(c["rmse"]),"per_group":{k:ff(v) for k,v in c["per_group"].items()}}
         for c in (candidates if candidates else history_raw)
@@ -675,6 +809,10 @@ def stage_calibrate(job, groups):
                 w.writerow({"group_count":len(c["groups"]),"rmse":f"{c['rmse']:.6f}","groups":" ".join(c["groups"])})
     T=np.eye(4); T[:3,:3]=R; T[:3,3]=t
     result={"status":"ok" if rmse<=max_multi and (not per or max(per.values())<=max_group_rmse) else "warn","rmse":ff(rmse),"max_multi_rmse":ff(max_multi),"max_group_rmse":ff(max_group_rmse),"multi_mode":multi_mode,"selection_policy":selected.get("policy",multi_mode),"four_center_groups":four_center_groups,"non_four_center_groups":non_four_center_rows,"selected_groups":cur,"final_group_residuals":{k:ff(v) for k,v in sorted(per_all.items(), key=lambda kv:natural_key(kv[0]))},"T_cam_lidar":[[ff(x) for x in row] for row in T.tolist()],"Rcl":[[ff(x) for x in row] for row in R.tolist()],"Pcl":[ff(x) for x in t.tolist()],"history":history}
+    if selected.get("best_permutations_all"):
+        result["permutation_note"]="qr_centers are reordered per group before joint SVD; tuple means reordered_qr = original_qr[tuple]."
+        result["selected_qr_permutations"]={g:[int(i) for i in selected.get("permutations",{}).get(g,())] for g in cur}
+        result["best_qr_permutations_all_groups"]={g:[int(i) for i in selected["best_permutations_all"][g]] for g in sorted(selected["best_permutations_all"].keys(), key=natural_key)}
     write_yaml(multi/"multi_result.yaml",result); write_yaml(out/"final_extrinsic.yaml",result); (multi/"selected_groups.txt").write_text("\n".join(cur)+"\n",encoding="utf-8")
     with (multi/"multi_calib_result.txt").open("w", encoding="utf-8") as f:
         f.write("# FAST-LIVO2 calibration format\n")

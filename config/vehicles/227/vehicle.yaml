@@ -18,6 +18,8 @@ sensors:
     camera_config: config/vehicles/227/cameras/front_left.yaml
     roi_profile: config/roi_profiles/hesai/front_left.yaml
     lidar_topic: auto
+    fast_calib:
+      multi_mode: permutation_search
   rear_right:
     enabled: false
     data_dir: /home/glf/dataDisk/calib/0427/227_right_rear
