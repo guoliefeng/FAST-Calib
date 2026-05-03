@@ -43,3 +43,20 @@ sensors:
     #   airy_template_angle_step_deg: 3.0
     #   airy_template_ring_band: 0.025
     #   airy_template_min_score: 80.0
+
+c2c_calibration:
+  default_group: right
+  dictionary: DICT_6X6_250
+  marker_id: 1
+  marker_size_m: 0.80
+  groups:
+    left:
+      enabled: true
+      cam0: rear_left
+      cam1: front_left
+      data_dir: /home/glf/dataDisk/calib/c2c/221/left_pair
+    right:
+      enabled: true
+      cam0: rear_right
+      cam1: front_right
+      data_dir: /home/glf/dataDisk/calib/c2c/221/right_pair

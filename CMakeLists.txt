@@ -78,5 +78,7 @@ catkin_install_python(PROGRAMS
   scripts/run_vehicle_calib.py
   scripts/inspect_lidar_centers.py
   scripts/recompute_extrinsic_from_manual_centers.py
+  scripts/c2c_calibrate_vehicle_aruco.py
+  scripts/summarize_vehicle_extrinsics.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

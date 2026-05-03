@@ -1,13 +1,13 @@
-# rear/common camera config
-# Temporary 221 corresponding-position intrinsics; replace with real intrinsics later.
-fx: 1019.539983
-fy: 1020.37116
-cx: 934.13218
-cy: 545.606007
-k1: -0.313954
-k2: 0.070619
-p1: -0.000869
-p2: 0.002769
+# 221 front-left camera config.
+# Intrinsics copied from config/old/221/front_left.yaml.
+fx: 1012.229557
+fy: 1013.831352
+cx: 925.288190
+cy: 514.768269
+k1: -0.303981
+k2: 0.067020
+p1: 0.000418
+p2: 0.000216
 
 # FAST-Calib target parameters
 marker_size: 0.20
