@@ -29,6 +29,20 @@
 	<arg name="airy_template_angle_step_deg" default="" />
 	<arg name="airy_template_ring_band" default="" />
 	<arg name="airy_template_min_score" default="" />
+	<arg name="lidar_center_extraction_mode" default="" />
+	<arg name="lidar_strict_geometry" default="" />
+	<arg name="lidar_geometry_side_rel_tol" default="" />
+	<arg name="lidar_geometry_diag_rel_tol" default="" />
+	<arg name="lidar_geometry_perimeter_rel_tol" default="" />
+	<arg name="lidar_min_plane_points" default="" />
+	<arg name="lidar_ransac_min_inliers" default="" />
+	<arg name="lidar_ransac_radius_tolerance" default="" />
+	<arg name="lidar_ransac_inlier_threshold" default="" />
+	<arg name="lidar_template_min_ring_per_hole" default="" />
+	<arg name="lidar_template_min_outer_per_hole" default="" />
+	<arg name="lidar_template_max_inside_per_hole" default="" />
+	<arg name="lidar_template_local_refine_radius" default="" />
+	<arg name="lidar_template_local_refine_step" default="" />
 
 	<rosparam file="$(arg config_file)" command="load" subst_value="true"/>
 	<param if="$(eval arg('pointcloud_source') != '')" name="pointcloud_source" value="$(arg pointcloud_source)" />
@@ -57,6 +71,20 @@
 	<param if="$(eval arg('airy_template_angle_step_deg') != '')" name="airy_template_angle_step_deg" value="$(arg airy_template_angle_step_deg)" />
 	<param if="$(eval arg('airy_template_ring_band') != '')" name="airy_template_ring_band" value="$(arg airy_template_ring_band)" />
 	<param if="$(eval arg('airy_template_min_score') != '')" name="airy_template_min_score" value="$(arg airy_template_min_score)" />
+	<param if="$(eval arg('lidar_center_extraction_mode') != '')" name="lidar_center_extraction_mode" value="$(arg lidar_center_extraction_mode)" />
+	<param if="$(eval arg('lidar_strict_geometry') != '')" name="lidar_strict_geometry" value="$(arg lidar_strict_geometry)" />
+	<param if="$(eval arg('lidar_geometry_side_rel_tol') != '')" name="lidar_geometry_side_rel_tol" value="$(arg lidar_geometry_side_rel_tol)" />
+	<param if="$(eval arg('lidar_geometry_diag_rel_tol') != '')" name="lidar_geometry_diag_rel_tol" value="$(arg lidar_geometry_diag_rel_tol)" />
+	<param if="$(eval arg('lidar_geometry_perimeter_rel_tol') != '')" name="lidar_geometry_perimeter_rel_tol" value="$(arg lidar_geometry_perimeter_rel_tol)" />
+	<param if="$(eval arg('lidar_min_plane_points') != '')" name="lidar_min_plane_points" value="$(arg lidar_min_plane_points)" />
+	<param if="$(eval arg('lidar_ransac_min_inliers') != '')" name="lidar_ransac_min_inliers" value="$(arg lidar_ransac_min_inliers)" />
+	<param if="$(eval arg('lidar_ransac_radius_tolerance') != '')" name="lidar_ransac_radius_tolerance" value="$(arg lidar_ransac_radius_tolerance)" />
+	<param if="$(eval arg('lidar_ransac_inlier_threshold') != '')" name="lidar_ransac_inlier_threshold" value="$(arg lidar_ransac_inlier_threshold)" />
+	<param if="$(eval arg('lidar_template_min_ring_per_hole') != '')" name="lidar_template_min_ring_per_hole" value="$(arg lidar_template_min_ring_per_hole)" />
+	<param if="$(eval arg('lidar_template_min_outer_per_hole') != '')" name="lidar_template_min_outer_per_hole" value="$(arg lidar_template_min_outer_per_hole)" />
+	<param if="$(eval arg('lidar_template_max_inside_per_hole') != '')" name="lidar_template_max_inside_per_hole" value="$(arg lidar_template_max_inside_per_hole)" />
+	<param if="$(eval arg('lidar_template_local_refine_radius') != '')" name="lidar_template_local_refine_radius" value="$(arg lidar_template_local_refine_radius)" />
+	<param if="$(eval arg('lidar_template_local_refine_step') != '')" name="lidar_template_local_refine_step" value="$(arg lidar_template_local_refine_step)" />
 
 	<node pkg="fast_calib" type="fast_calib" name="fast_calib" output="screen">
 	</node>

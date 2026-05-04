@@ -79,6 +79,24 @@ struct Params {
   double airy_template_angle_step_deg;
   double airy_template_ring_band;
   double airy_template_min_score;
+  // LiDAR circle-center extraction policy.
+  // auto: template/empty-region first, then legacy RANSAC fallback.
+  // template: use only four-hole empty-region template matching.
+  // ransac / legacy: use only the previous circle-candidate RANSAC pipeline.
+  string lidar_center_extraction_mode;
+  bool lidar_strict_geometry;
+  double lidar_geometry_side_rel_tol;
+  double lidar_geometry_diag_rel_tol;
+  double lidar_geometry_perimeter_rel_tol;
+  int lidar_min_plane_points;
+  int lidar_ransac_min_inliers;
+  double lidar_ransac_radius_tolerance;
+  double lidar_ransac_inlier_threshold;
+  int lidar_template_min_ring_per_hole;
+  int lidar_template_min_outer_per_hole;
+  int lidar_template_max_inside_per_hole;
+  double lidar_template_local_refine_radius;
+  double lidar_template_local_refine_step;
 };
 
 // 读取参数
@@ -119,6 +137,20 @@ Params loadParameters(ros::NodeHandle &nh) {
   nh.param("airy_template_angle_step_deg", params.airy_template_angle_step_deg, 3.0);
   nh.param("airy_template_ring_band", params.airy_template_ring_band, 0.025);
   nh.param("airy_template_min_score", params.airy_template_min_score, 80.0);
+  nh.param("lidar_center_extraction_mode", params.lidar_center_extraction_mode, string("auto"));
+  nh.param("lidar_strict_geometry", params.lidar_strict_geometry, true);
+  nh.param("lidar_geometry_side_rel_tol", params.lidar_geometry_side_rel_tol, 0.18);
+  nh.param("lidar_geometry_diag_rel_tol", params.lidar_geometry_diag_rel_tol, 0.18);
+  nh.param("lidar_geometry_perimeter_rel_tol", params.lidar_geometry_perimeter_rel_tol, 0.18);
+  nh.param("lidar_min_plane_points", params.lidar_min_plane_points, 700);
+  nh.param("lidar_ransac_min_inliers", params.lidar_ransac_min_inliers, 10);
+  nh.param("lidar_ransac_radius_tolerance", params.lidar_ransac_radius_tolerance, 0.02);
+  nh.param("lidar_ransac_inlier_threshold", params.lidar_ransac_inlier_threshold, 0.012);
+  nh.param("lidar_template_min_ring_per_hole", params.lidar_template_min_ring_per_hole, 2);
+  nh.param("lidar_template_min_outer_per_hole", params.lidar_template_min_outer_per_hole, 2);
+  nh.param("lidar_template_max_inside_per_hole", params.lidar_template_max_inside_per_hole, 8);
+  nh.param("lidar_template_local_refine_radius", params.lidar_template_local_refine_radius, 0.05);
+  nh.param("lidar_template_local_refine_step", params.lidar_template_local_refine_step, 0.01);
   nh.param("x_min", params.x_min, 1.5);
   nh.param("x_max", params.x_max, 3.0);
   nh.param("y_min", params.y_min, -1.5);

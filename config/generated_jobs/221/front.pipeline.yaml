@@ -15,6 +15,20 @@ fast_calib:
   package: fast_calib
   calib_launch: calib.launch
   pointcloud_source: bag
+  lidar_center_extraction_mode: auto
+  lidar_min_plane_points: 700
+  lidar_template_min_ring_per_hole: 2
+  lidar_template_min_outer_per_hole: 2
+  lidar_template_max_inside_per_hole: 8
+  lidar_template_local_refine_radius: 0.05
+  lidar_template_local_refine_step: 0.01
+  lidar_strict_geometry: true
+  lidar_geometry_side_rel_tol: 0.18
+  lidar_geometry_diag_rel_tol: 0.18
+  lidar_geometry_perimeter_rel_tol: 0.18
+  lidar_ransac_min_inliers: 10
+  lidar_ransac_radius_tolerance: 0.02
+  lidar_ransac_inlier_threshold: 0.012
   max_single_rmse: 0.08
   max_multi_rmse: 0.03
   max_group_rmse: 0.06

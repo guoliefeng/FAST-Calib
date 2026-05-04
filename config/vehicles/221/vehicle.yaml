@@ -18,12 +18,6 @@ sensors:
     camera_config: config/vehicles/221/cameras/front_left.yaml
     roi_profile: config/roi_profiles/hesai/front_left.yaml
     lidar_topic: auto
-  front_right:
-    enabled: false
-    data_dir: /home/glf/dataDisk/calib/0426/data_221_front_right
-    camera_config: config/vehicles/221/cameras/front_right.yaml
-    roi_profile: config/roi_profiles/airy/front_right.yaml
-    lidar_topic: auto
   rear_right:
     enabled: true
     data_dir: /home/glf/dataDisk/calib/0426/data_221_rear_right

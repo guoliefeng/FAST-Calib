@@ -14,7 +14,9 @@ which is included as part of this source code package.
 #include <Eigen/Dense>
 #include <ros/ros.h>
 #include <pcl/filters/voxel_grid.h>
+#include <array>
 #include <algorithm>
+#include <cctype>
 #include <limits>
 #include <random>
 #include <unordered_map>
@@ -34,6 +36,20 @@ private:
     double airy_template_angle_step_deg_;
     double airy_template_ring_band_;
     double airy_template_min_score_;
+    std::string lidar_center_extraction_mode_;
+    bool lidar_strict_geometry_;
+    double lidar_geometry_side_rel_tol_;
+    double lidar_geometry_diag_rel_tol_;
+    double lidar_geometry_perimeter_rel_tol_;
+    int lidar_min_plane_points_;
+    int lidar_ransac_min_inliers_;
+    double lidar_ransac_radius_tolerance_;
+    double lidar_ransac_inlier_threshold_;
+    int lidar_template_min_ring_per_hole_;
+    int lidar_template_min_outer_per_hole_;
+    int lidar_template_max_inside_per_hole_;
+    double lidar_template_local_refine_radius_;
+    double lidar_template_local_refine_step_;
 
     // 存储中间结果的点云
     pcl::PointCloud<Common::Point>::Ptr filtered_cloud_;
@@ -57,6 +73,24 @@ private:
         double rmse = std::numeric_limits<double>::infinity();
         int support = 0;
         std::vector<int> group;
+        double selection_score = std::numeric_limits<double>::infinity();
+    };
+
+    struct HoleStats
+    {
+        int inside = 0;
+        int ring = 0;
+        int outer = 0;
+        int far_outer = 0;
+        double score = -std::numeric_limits<double>::infinity();
+    };
+
+    struct TemplateEval
+    {
+        bool feasible = false;
+        double score = -std::numeric_limits<double>::infinity();
+        std::vector<pcl::PointXYZ> centers;
+        std::array<HoleStats, TARGET_NUM_CIRCLES> holes;
     };
 
     bool fitCircleFromThree(const pcl::PointXYZ &p1,
@@ -83,6 +117,32 @@ private:
         cy = (a11 * b2 - b1 * a21) / det;
         radius = std::hypot(static_cast<double>(p1.x) - cx, static_cast<double>(p1.y) - cy);
         return std::isfinite(radius);
+    }
+
+    static std::string lowerString(std::string value)
+    {
+        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        return value;
+    }
+
+    bool wantsTemplate() const
+    {
+        return lidar_center_extraction_mode_ == "auto" ||
+               lidar_center_extraction_mode_ == "template";
+    }
+
+    bool wantsRansac() const
+    {
+        return lidar_center_extraction_mode_ == "auto" ||
+               lidar_center_extraction_mode_ == "ransac" ||
+               lidar_center_extraction_mode_ == "legacy";
+    }
+
+    bool allowRansacFallback() const
+    {
+        return lidar_center_extraction_mode_ == "auto";
     }
 
     bool refineCircleLeastSquares(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
@@ -127,14 +187,17 @@ private:
     {
         constexpr int kMaxCandidates = 40;
         constexpr int kMaxIterations = 6000;
-        constexpr int kMinInliers = 5;
-        const double radius_min = circle_radius_ - 0.03;
-        const double radius_max = circle_radius_ + 0.03;
-        const double inlier_threshold = 0.02;
+        const int kMinInliers = std::max(3, lidar_ransac_min_inliers_);
+        const double radius_tol = std::max(0.005, lidar_ransac_radius_tolerance_);
+        const double radius_min = circle_radius_ - radius_tol;
+        const double radius_max = circle_radius_ + radius_tol;
+        const double inlier_threshold = std::max(0.003, lidar_ransac_inlier_threshold_);
 
         std::vector<CircleCandidate> candidates;
         pcl::PointCloud<pcl::PointXYZ>::Ptr work(new pcl::PointCloud<pcl::PointXYZ>(*xy_cloud));
         std::mt19937 rng(101);
+        ROS_INFO("[LiDAR][RANSAC] params: min_inliers=%d radius_tol=%.4f inlier_threshold=%.4f input_points=%zu",
+                 kMinInliers, radius_tol, inlier_threshold, xy_cloud ? xy_cloud->size() : 0);
 
         for (int candidate_idx = 0; candidate_idx < kMaxCandidates && work->points.size() > 3; ++candidate_idx)
         {
@@ -228,6 +291,115 @@ private:
         return candidates;
     }
 
+    bool validateTargetGeometryPoints(const std::vector<pcl::PointXYZ> &points,
+                                      const std::string &tag,
+                                      bool warn = true) const
+    {
+        if (points.size() != TARGET_NUM_CIRCLES)
+        {
+            if (warn)
+            {
+                ROS_WARN("[LiDAR][Geometry] %s reject: expected 4 centers, got %zu",
+                         tag.c_str(), points.size());
+            }
+            return false;
+        }
+
+        std::vector<double> dists;
+        dists.reserve(6);
+        for (int i = 0; i < TARGET_NUM_CIRCLES; ++i)
+        {
+            for (int j = i + 1; j < TARGET_NUM_CIRCLES; ++j)
+            {
+                const double dx = static_cast<double>(points[i].x) - static_cast<double>(points[j].x);
+                const double dy = static_cast<double>(points[i].y) - static_cast<double>(points[j].y);
+                const double dz = static_cast<double>(points[i].z) - static_cast<double>(points[j].z);
+                dists.push_back(std::sqrt(dx * dx + dy * dy + dz * dz));
+            }
+        }
+        std::sort(dists.begin(), dists.end());
+
+        const double short_side = std::min(delta_width_circles_, delta_height_circles_);
+        const double long_side = std::max(delta_width_circles_, delta_height_circles_);
+        const double diagonal = std::sqrt(delta_width_circles_ * delta_width_circles_ +
+                                          delta_height_circles_ * delta_height_circles_);
+        const std::array<double, 6> expected = {
+            short_side, short_side, long_side, long_side, diagonal, diagonal};
+
+        bool ok = true;
+        for (int i = 0; i < 6; ++i)
+        {
+            const double tol = (i < 4) ? lidar_geometry_side_rel_tol_ : lidar_geometry_diag_rel_tol_;
+            const double rel = expected[i] > 1e-9 ? std::fabs(dists[i] - expected[i]) / expected[i]
+                                                  : std::numeric_limits<double>::infinity();
+            if (rel > tol)
+            {
+                if (warn)
+                {
+                    ROS_WARN("[LiDAR][Geometry] %s reject: sorted_dist[%d]=%.4f expected=%.4f rel=%.3f tol=%.3f",
+                             tag.c_str(), i, dists[i], expected[i], rel, tol);
+                }
+                ok = false;
+            }
+        }
+
+        const double side_sum = dists[0] + dists[1] + dists[2] + dists[3];
+        const double expected_perimeter = 2.0 * (delta_width_circles_ + delta_height_circles_);
+        const double perimeter_rel = expected_perimeter > 1e-9
+                                         ? std::fabs(side_sum - expected_perimeter) / expected_perimeter
+                                         : std::numeric_limits<double>::infinity();
+        if (perimeter_rel > lidar_geometry_perimeter_rel_tol_)
+        {
+            if (warn)
+            {
+                ROS_WARN("[LiDAR][Geometry] %s reject: side_perimeter=%.4f expected=%.4f rel=%.3f tol=%.3f",
+                         tag.c_str(), side_sum, expected_perimeter, perimeter_rel,
+                         lidar_geometry_perimeter_rel_tol_);
+            }
+            ok = false;
+        }
+
+        if (ok && warn)
+        {
+            ROS_INFO("[LiDAR][Geometry] %s pass: distances=[%.4f %.4f %.4f %.4f %.4f %.4f]",
+                     tag.c_str(), dists[0], dists[1], dists[2], dists[3], dists[4], dists[5]);
+        }
+        return ok;
+    }
+
+    bool validateTargetGeometry3D(const pcl::PointCloud<pcl::PointXYZ>::Ptr &centers,
+                                  const std::string &tag) const
+    {
+        if (!centers)
+        {
+            ROS_WARN("[LiDAR][Geometry] %s reject: null center cloud", tag.c_str());
+            return false;
+        }
+        std::vector<pcl::PointXYZ> pts;
+        pts.reserve(centers->size());
+        for (const auto &p : centers->points)
+        {
+            pts.push_back(p);
+        }
+        return validateTargetGeometryPoints(pts, tag, true);
+    }
+
+    bool acceptFinalGeometry(const pcl::PointCloud<pcl::PointXYZ>::Ptr &centers,
+                             const std::string &tag) const
+    {
+        const bool ok = validateTargetGeometry3D(centers, tag);
+        if (!ok && lidar_strict_geometry_)
+        {
+            ROS_WARN("[LiDAR][Geometry] %s final geometry failed; strict mode rejects centers.", tag.c_str());
+            return false;
+        }
+        if (!ok)
+        {
+            ROS_WARN("[LiDAR][Geometry] %s final geometry failed; strict mode disabled, accepting centers.", tag.c_str());
+        }
+        return true;
+    }
+
     double geometryScore(const std::vector<pcl::PointXYZ> &points, bool &geom_valid) const
     {
         geom_valid = false;
@@ -279,7 +451,7 @@ private:
             {
                 const double rel = std::fabs(sides[i] - pattern[i]) / pattern[i];
                 score += rel * rel;
-                if (rel > 0.35)
+                if (rel > lidar_geometry_side_rel_tol_)
                 {
                     pattern_valid = false;
                 }
@@ -294,6 +466,18 @@ private:
         const double perimeter = sides[0] + sides[1] + sides[2] + sides[3];
         const double ideal_perimeter = 2.0 * (delta_width_circles_ + delta_height_circles_);
         const double perimeter_error = std::fabs(perimeter - ideal_perimeter) / ideal_perimeter;
+        const double diag_expected = std::sqrt(delta_width_circles_ * delta_width_circles_ +
+                                               delta_height_circles_ * delta_height_circles_);
+        const auto &d0 = points[order[0]];
+        const auto &d1 = points[order[1]];
+        const auto &d2 = points[order[2]];
+        const auto &d3 = points[order[3]];
+        const double diag1 = std::hypot(static_cast<double>(d0.x) - static_cast<double>(d2.x),
+                                        static_cast<double>(d0.y) - static_cast<double>(d2.y));
+        const double diag2 = std::hypot(static_cast<double>(d1.x) - static_cast<double>(d3.x),
+                                        static_cast<double>(d1.y) - static_cast<double>(d3.y));
+        const double diag_error = std::max(std::fabs(diag1 - diag_expected) / diag_expected,
+                                           std::fabs(diag2 - diag_expected) / diag_expected);
         const double target_radius = std::sqrt(delta_width_circles_ * delta_width_circles_ +
                                                delta_height_circles_ * delta_height_circles_) /
                                      2.0;
@@ -307,8 +491,11 @@ private:
         }
         center_radius_error /= TARGET_NUM_CIRCLES;
 
-        geom_valid = (valid1 || valid2) && perimeter_error < 0.35;
-        return std::min(score1, score2) + perimeter_error + center_radius_error;
+        geom_valid = (valid1 || valid2) &&
+                     perimeter_error < lidar_geometry_perimeter_rel_tol_ &&
+                     diag_error < lidar_geometry_diag_rel_tol_ &&
+                     validateTargetGeometryPoints(points, "candidate_2d", false);
+        return std::min(score1, score2) + perimeter_error + diag_error + center_radius_error;
     }
 
     CandidateScore selectBestCandidateGroup(const std::vector<CircleCandidate> &candidates,
@@ -346,6 +533,10 @@ private:
             bool geom_valid = false;
             const double geom_score = geometryScore(candidate_points, geom_valid);
             double rmse = std::numeric_limits<double>::infinity();
+            if (!geom_valid)
+            {
+                continue;
+            }
 
             if (use_qr)
             {
@@ -372,32 +563,12 @@ private:
                 rmse = computeRMSE(sorted_qr, aligned_lidar);
             }
 
+            const double rmse_aux = (use_qr && std::isfinite(rmse)) ? 0.05 * rmse : 0.0;
+            const double selection_score = geom_score + rmse_aux - 1e-4 * static_cast<double>(support);
             bool better = false;
             if (!best.found)
             {
                 better = true;
-            }
-            else if (use_qr)
-            {
-                if (rmse < best.rmse - 1e-6)
-                {
-                    better = true;
-                }
-                else if (std::fabs(rmse - best.rmse) <= 1e-6)
-                {
-                    if (geom_valid != best.geom_valid)
-                    {
-                        better = geom_valid;
-                    }
-                    else if (geom_score < best.geom_score - 1e-6)
-                    {
-                        better = true;
-                    }
-                    else if (std::fabs(geom_score - best.geom_score) <= 1e-6 && support > best.support)
-                    {
-                        better = true;
-                    }
-                }
             }
             else
             {
@@ -405,11 +576,26 @@ private:
                 {
                     better = geom_valid;
                 }
-                else if (geom_score < best.geom_score - 1e-6)
+                else if (selection_score < best.selection_score - 1e-6)
                 {
                     better = true;
                 }
-                else if (std::fabs(geom_score - best.geom_score) <= 1e-6 && support > best.support)
+                else if (std::fabs(selection_score - best.selection_score) <= 1e-6 &&
+                         geom_score < best.geom_score - 1e-6)
+                {
+                    better = true;
+                }
+                else if (std::fabs(selection_score - best.selection_score) <= 1e-6 &&
+                         std::fabs(geom_score - best.geom_score) <= 1e-6 &&
+                         support > best.support)
+                {
+                    better = true;
+                }
+                else if (use_qr &&
+                         std::fabs(selection_score - best.selection_score) <= 1e-6 &&
+                         std::fabs(geom_score - best.geom_score) <= 1e-6 &&
+                         support == best.support &&
+                         rmse < best.rmse - 1e-6)
                 {
                     better = true;
                 }
@@ -423,10 +609,135 @@ private:
                 best.rmse = rmse;
                 best.support = support;
                 best.group = group;
+                best.selection_score = selection_score;
             }
         }
 
         return best;
+    }
+
+    std::array<Eigen::Vector2d, TARGET_NUM_CIRCLES> templateOffsets() const
+    {
+        const double half_w = 0.5 * delta_width_circles_;
+        const double half_h = 0.5 * delta_height_circles_;
+        return {
+            Eigen::Vector2d(-half_w, -half_h),
+            Eigen::Vector2d( half_w, -half_h),
+            Eigen::Vector2d(-half_w,  half_h),
+            Eigen::Vector2d( half_w,  half_h),
+        };
+    }
+
+    HoleStats computeHoleStats(const pcl::PointCloud<pcl::PointXYZ>::Ptr &aligned_plane,
+                               double hx,
+                               double hy) const
+    {
+        const double r = circle_radius_;
+        const double band = std::max(0.005, airy_template_ring_band_);
+        const double inner = r * 0.70;
+        const double outer_min = r + 0.030;
+        const double outer_max = r + 0.180;
+        const double far_outer_min = r + 0.180;
+        const double far_outer_max = r + 0.280;
+
+        HoleStats stats;
+        for (const auto &p : aligned_plane->points)
+        {
+            const double dx = static_cast<double>(p.x) - hx;
+            const double dy = static_cast<double>(p.y) - hy;
+            const double d = std::sqrt(dx * dx + dy * dy);
+            if (d < inner)
+            {
+                ++stats.inside;
+            }
+            if (std::fabs(d - r) < band)
+            {
+                ++stats.ring;
+            }
+            if (d >= outer_min && d <= outer_max)
+            {
+                ++stats.outer;
+            }
+            if (d >= far_outer_min && d <= far_outer_max)
+            {
+                ++stats.far_outer;
+            }
+        }
+        stats.score = 3.0 * stats.ring +
+                      0.4 * stats.outer +
+                      0.1 * stats.far_outer -
+                      6.0 * stats.inside;
+        return stats;
+    }
+
+    bool holeStatsFeasible(const HoleStats &stats) const
+    {
+        return stats.ring >= lidar_template_min_ring_per_hole_ &&
+               stats.outer >= lidar_template_min_outer_per_hole_ &&
+               stats.inside <= lidar_template_max_inside_per_hole_;
+    }
+
+    TemplateEval evaluateTemplate(const pcl::PointCloud<pcl::PointXYZ>::Ptr &aligned_plane,
+                                  double cx,
+                                  double cy,
+                                  double theta) const
+    {
+        TemplateEval eval;
+        eval.centers.reserve(TARGET_NUM_CIRCLES);
+        const auto offsets = templateOffsets();
+        const double ct = std::cos(theta);
+        const double st = std::sin(theta);
+        eval.score = 0.0;
+        eval.feasible = true;
+
+        for (int i = 0; i < TARGET_NUM_CIRCLES; ++i)
+        {
+            const auto &off = offsets[i];
+            const double hx = cx + ct * off.x() - st * off.y();
+            const double hy = cy + st * off.x() + ct * off.y();
+            eval.centers.push_back(pcl::PointXYZ(hx, hy, 0.0f));
+            eval.holes[i] = computeHoleStats(aligned_plane, hx, hy);
+            eval.score += eval.holes[i].score;
+            if (!holeStatsFeasible(eval.holes[i]))
+            {
+                eval.feasible = false;
+            }
+        }
+        if (!validateTargetGeometryPoints(eval.centers, "template_candidate_2d", false))
+        {
+            eval.feasible = false;
+        }
+        return eval;
+    }
+
+    void logTemplateHoleStats(const std::string &prefix,
+                              const std::array<HoleStats, TARGET_NUM_CIRCLES> &holes) const
+    {
+        for (int i = 0; i < TARGET_NUM_CIRCLES; ++i)
+        {
+            ROS_INFO("[Template] %s hole_%d: score=%.2f inside=%d ring=%d outer=%d far_outer=%d",
+                     prefix.c_str(), i, holes[i].score, holes[i].inside, holes[i].ring,
+                     holes[i].outer, holes[i].far_outer);
+        }
+    }
+
+    bool backProjectAlignedCenters(const std::vector<pcl::PointXYZ> &aligned_centers,
+                                   const Eigen::Matrix3d &R_inv,
+                                   double average_z,
+                                   pcl::PointCloud<pcl::PointXYZ>::Ptr center_cloud) const
+    {
+        center_cloud->clear();
+        center_z0_cloud_->clear();
+        for (const auto &center : aligned_centers)
+        {
+            center_z0_cloud_->push_back(center);
+            Eigen::Vector3d aligned_point(center.x, center.y, static_cast<double>(center.z) + average_z);
+            Eigen::Vector3d original_point = R_inv * aligned_point;
+            center_cloud->push_back(pcl::PointXYZ(original_point.x(),
+                                                  original_point.y(),
+                                                  original_point.z()));
+        }
+        return center_cloud->size() == TARGET_NUM_CIRCLES;
     }
 
     bool detectAiryTemplateCenters(const pcl::PointCloud<pcl::PointXYZ>::Ptr &aligned_plane,
@@ -434,16 +745,26 @@ private:
                                    double average_z,
                                    pcl::PointCloud<pcl::PointXYZ>::Ptr center_cloud) const
     {
-        if (!airy_template_detector_ || !aligned_plane || aligned_plane->empty())
+        if (!airy_template_detector_)
         {
+            ROS_WARN("[Template] Reject: airy_template_detector=false.");
             return false;
         }
-
-        const double r = circle_radius_;
-        const double w = delta_width_circles_;
-        const double h = delta_height_circles_;
-        if (r <= 0.0 || w <= 0.0 || h <= 0.0)
+        if (!aligned_plane || aligned_plane->empty())
         {
+            ROS_WARN("[Template] Reject: aligned plane is empty.");
+            return false;
+        }
+        if (static_cast<int>(aligned_plane->size()) < lidar_min_plane_points_)
+        {
+            ROS_WARN("[Template] Reject: aligned plane has %zu points, need >= %d",
+                     aligned_plane->size(), lidar_min_plane_points_);
+            return false;
+        }
+        if (circle_radius_ <= 0.0 || delta_width_circles_ <= 0.0 || delta_height_circles_ <= 0.0)
+        {
+            ROS_WARN("[Template] Reject: invalid target geometry r=%.4f w=%.4f h=%.4f",
+                     circle_radius_, delta_width_circles_, delta_height_circles_);
             return false;
         }
 
@@ -459,110 +780,35 @@ private:
             max_y = std::max(max_y, static_cast<double>(p.y));
         }
 
-        const double half_w = 0.5 * w;
-        const double half_h = 0.5 * h;
-        if (max_x - min_x < w * 0.8 || max_y - min_y < h * 0.8)
+        const double half_w = 0.5 * delta_width_circles_;
+        const double half_h = 0.5 * delta_height_circles_;
+        if (max_x - min_x < delta_width_circles_ * 0.8 ||
+            max_y - min_y < delta_height_circles_ * 0.8)
         {
-            ROS_WARN("[AiryTemplate] Board-plane extent too small for template search.");
+            ROS_WARN("[Template] Reject: board-plane extent too small for template search.");
             return false;
         }
 
-        const std::vector<Eigen::Vector2d> offsets = {
-            Eigen::Vector2d(-half_w, -half_h),
-            Eigen::Vector2d( half_w, -half_h),
-            Eigen::Vector2d(-half_w,  half_h),
-            Eigen::Vector2d( half_w,  half_h),
-        };
-
         const double grid = std::max(0.005, airy_template_grid_);
         const double angle_step = std::max(0.5, airy_template_angle_step_deg_) * M_PI / 180.0;
-        const double band = std::max(0.005, airy_template_ring_band_);
-        const double inner = r * 0.75;
-        const double outer_min = r + 0.035;
-        const double outer_max = r + 0.180;
-        const double far_outer_min = r + 0.180;
-        const double far_outer_max = r + 0.280;
-
-        double best_score = -std::numeric_limits<double>::infinity();
+        TemplateEval best_any;
+        TemplateEval best_feasible;
         double best_cx = 0.0;
         double best_cy = 0.0;
         double best_theta = 0.0;
-        int best_inside = 0;
-        int best_ring = 0;
-        int best_outer = 0;
-        int best_far_outer = 0;
-
-        auto evaluate = [&](double cx, double cy, double theta,
-                            int *inside_sum, int *ring_sum,
-                            int *outer_sum, int *far_outer_sum) -> double {
-            const double ct = std::cos(theta);
-            const double st = std::sin(theta);
-            double score = 0.0;
-            int total_inside = 0;
-            int total_ring = 0;
-            int total_outer = 0;
-            int total_far_outer = 0;
-
-            for (const auto &off : offsets)
-            {
-                const double hx = cx + ct * off.x() - st * off.y();
-                const double hy = cy + st * off.x() + ct * off.y();
-
-                int inside = 0;
-                int ring = 0;
-                int outer = 0;
-                int far_outer = 0;
-
-                for (const auto &p : aligned_plane->points)
-                {
-                    const double dx = static_cast<double>(p.x) - hx;
-                    const double dy = static_cast<double>(p.y) - hy;
-                    const double d = std::sqrt(dx * dx + dy * dy);
-                    if (d < inner)
-                    {
-                        ++inside;
-                    }
-                    if (std::fabs(d - r) < band)
-                    {
-                        ++ring;
-                    }
-                    if (d > outer_min && d < outer_max)
-                    {
-                        ++outer;
-                    }
-                    if (d > far_outer_min && d < far_outer_max)
-                    {
-                        ++far_outer;
-                    }
-                }
-
-                score += 3.0 * ring + 0.4 * outer + 0.1 * far_outer - 6.0 * inside;
-                total_inside += inside;
-                total_ring += ring;
-                total_outer += outer;
-                total_far_outer += far_outer;
-            }
-
-            if (inside_sum) *inside_sum = total_inside;
-            if (ring_sum) *ring_sum = total_ring;
-            if (outer_sum) *outer_sum = total_outer;
-            if (far_outer_sum) *far_outer_sum = total_far_outer;
-            return score;
-        };
 
         auto update_best = [&](double cx, double cy, double theta) {
-            int inside = 0, ring = 0, outer = 0, far_outer = 0;
-            const double score = evaluate(cx, cy, theta, &inside, &ring, &outer, &far_outer);
-            if (score > best_score)
+            TemplateEval eval = evaluateTemplate(aligned_plane, cx, cy, theta);
+            if (eval.score > best_any.score)
             {
-                best_score = score;
+                best_any = eval;
+            }
+            if (eval.feasible && eval.score > best_feasible.score)
+            {
+                best_feasible = eval;
                 best_cx = cx;
                 best_cy = cy;
                 best_theta = theta;
-                best_inside = inside;
-                best_ring = ring;
-                best_outer = outer;
-                best_far_outer = far_outer;
             }
         };
 
@@ -575,6 +821,14 @@ private:
                     update_best(cx, cy, theta);
                 }
             }
+        }
+
+        if (!best_feasible.feasible)
+        {
+            ROS_WARN("[Template] Reject: no coarse feasible template. Best_any score=%.3f",
+                     best_any.score);
+            logTemplateHoleStats("best_any", best_any.holes);
+            return false;
         }
 
         const double fine_grid = std::max(0.005, grid * 0.5);
@@ -593,36 +847,88 @@ private:
             }
         }
 
-        ROS_INFO("[AiryTemplate] best score=%.3f, center=(%.4f, %.4f), theta=%.2f deg, inside=%d, ring=%d, outer=%d, far_outer=%d",
-                 best_score, best_cx, best_cy, best_theta * 180.0 / M_PI,
-                 best_inside, best_ring, best_outer, best_far_outer);
+        ROS_INFO("[Template] coarse/fine best score=%.3f center=(%.4f, %.4f) theta=%.2f deg",
+                 best_feasible.score, best_cx, best_cy, best_theta * 180.0 / M_PI);
+        logTemplateHoleStats("best", best_feasible.holes);
 
-        if (!std::isfinite(best_score) || best_score < airy_template_min_score_)
+        if (!std::isfinite(best_feasible.score) || best_feasible.score < airy_template_min_score_)
         {
-            ROS_WARN("[AiryTemplate] Reject template: score %.3f < min_score %.3f",
-                     best_score, airy_template_min_score_);
+            ROS_WARN("[Template] Reject: score %.3f < min_score %.3f",
+                     best_feasible.score, airy_template_min_score_);
             return false;
         }
 
-        const double ct = std::cos(best_theta);
-        const double st = std::sin(best_theta);
-        center_cloud->clear();
-        center_z0_cloud_->clear();
-        for (const auto &off : offsets)
-        {
-            const double hx = best_cx + ct * off.x() - st * off.y();
-            const double hy = best_cy + st * off.x() + ct * off.y();
-            center_z0_cloud_->push_back(pcl::PointXYZ(hx, hy, 0.0f));
+        std::vector<pcl::PointXYZ> refined_centers;
+        refined_centers.reserve(TARGET_NUM_CIRCLES);
+        std::array<HoleStats, TARGET_NUM_CIRCLES> refined_holes;
+        const double refine_radius = std::max(0.0, lidar_template_local_refine_radius_);
+        const double refine_step = std::max(0.002, lidar_template_local_refine_step_);
+        const int refine_steps = std::max(0, static_cast<int>(std::ceil(refine_radius / refine_step)));
 
-            Eigen::Vector3d aligned_point(hx, hy, average_z);
-            Eigen::Vector3d original_point = R_inv * aligned_point;
-            center_cloud->push_back(pcl::PointXYZ(original_point.x(),
-                                                  original_point.y(),
-                                                  original_point.z()));
+        for (int hole_idx = 0; hole_idx < TARGET_NUM_CIRCLES; ++hole_idx)
+        {
+            const pcl::PointXYZ theoretical = best_feasible.centers[hole_idx];
+            HoleStats best_local_stats = best_feasible.holes[hole_idx];
+            pcl::PointXYZ best_local = theoretical;
+            bool found_local = holeStatsFeasible(best_local_stats);
+
+            for (int ix = -refine_steps; ix <= refine_steps; ++ix)
+            {
+                for (int iy = -refine_steps; iy <= refine_steps; ++iy)
+                {
+                    const double dx = ix * refine_step;
+                    const double dy = iy * refine_step;
+                    if (std::sqrt(dx * dx + dy * dy) > refine_radius + 1e-9)
+                    {
+                        continue;
+                    }
+                    HoleStats stats = computeHoleStats(aligned_plane,
+                                                       static_cast<double>(theoretical.x) + dx,
+                                                       static_cast<double>(theoretical.y) + dy);
+                    if (!holeStatsFeasible(stats))
+                    {
+                        continue;
+                    }
+                    if (!found_local || stats.score > best_local_stats.score)
+                    {
+                        found_local = true;
+                        best_local_stats = stats;
+                        best_local.x = static_cast<float>(static_cast<double>(theoretical.x) + dx);
+                        best_local.y = static_cast<float>(static_cast<double>(theoretical.y) + dy);
+                        best_local.z = 0.0f;
+                    }
+                }
+            }
+
+            if (!found_local)
+            {
+                ROS_WARN("[Template] Reject: hole_%d has no locally feasible refine candidate.", hole_idx);
+                return false;
+            }
+            refined_centers.push_back(best_local);
+            refined_holes[hole_idx] = best_local_stats;
         }
 
-        ROS_INFO("[AiryTemplate] Accepted four template centers.");
-        return center_cloud->size() == TARGET_NUM_CIRCLES;
+        logTemplateHoleStats("refined", refined_holes);
+        if (!validateTargetGeometryPoints(refined_centers, "template_refined_2d", true))
+        {
+            ROS_WARN("[Template] Reject: refined centers failed 2D geometry.");
+            return false;
+        }
+        if (!backProjectAlignedCenters(refined_centers, R_inv, average_z, center_cloud))
+        {
+            ROS_WARN("[Template] Reject: back-projection did not produce four centers.");
+            return false;
+        }
+        if (!acceptFinalGeometry(center_cloud, "template_3d"))
+        {
+            center_cloud->clear();
+            center_z0_cloud_->clear();
+            return false;
+        }
+
+        ROS_INFO("[Template] Accepted four empty-region template centers.");
+        return true;
     }
 
     pcl::PointCloud<pcl::PointXYZ>::Ptr extractAiryHoleBoundaryCandidates(
@@ -720,11 +1026,20 @@ private:
             return false;
         }
 
-        ROS_INFO("[LiDAR] Selected circle group: rmse=%.4f, geom_score=%.4f, geom_valid=%s, support=%d",
+        std::string group_text;
+        for (size_t i = 0; i < best_candidate.group.size(); ++i)
+        {
+            group_text += (i == 0 ? "" : ",");
+            group_text += std::to_string(best_candidate.group[i]);
+        }
+
+        ROS_INFO("[LiDAR][RANSAC] Selected circle group=[%s]: rmse=%.4f, geom_score=%.4f, geom_valid=%s, support=%d, selection_score=%.4f",
+                 group_text.c_str(),
                  best_candidate.rmse,
                  best_candidate.geom_score,
                  best_candidate.geom_valid ? "true" : "false",
-                 best_candidate.support);
+                 best_candidate.support,
+                 best_candidate.selection_score);
 
         center_cloud->clear();
         for (const int idx : best_candidate.group)
@@ -736,7 +1051,16 @@ private:
                                                   original_point.y(),
                                                   original_point.z()));
         }
-        return center_cloud->size() == TARGET_NUM_CIRCLES;
+        if (center_cloud->size() != TARGET_NUM_CIRCLES)
+        {
+            return false;
+        }
+        if (!acceptFinalGeometry(center_cloud, "ransac_3d"))
+        {
+            center_cloud->clear();
+            return false;
+        }
+        return true;
     }
 
 public:
@@ -772,6 +1096,33 @@ public:
         airy_template_angle_step_deg_ = params.airy_template_angle_step_deg;
         airy_template_ring_band_ = params.airy_template_ring_band;
         airy_template_min_score_ = params.airy_template_min_score;
+        lidar_center_extraction_mode_ = lowerString(params.lidar_center_extraction_mode);
+        if (lidar_center_extraction_mode_ != "auto" &&
+            lidar_center_extraction_mode_ != "template" &&
+            lidar_center_extraction_mode_ != "ransac" &&
+            lidar_center_extraction_mode_ != "legacy")
+        {
+            ROS_WARN("[LiDAR] Unknown lidar_center_extraction_mode='%s', using auto.",
+                     params.lidar_center_extraction_mode.c_str());
+            lidar_center_extraction_mode_ = "auto";
+        }
+        lidar_strict_geometry_ = params.lidar_strict_geometry;
+        lidar_geometry_side_rel_tol_ = params.lidar_geometry_side_rel_tol;
+        lidar_geometry_diag_rel_tol_ = params.lidar_geometry_diag_rel_tol;
+        lidar_geometry_perimeter_rel_tol_ = params.lidar_geometry_perimeter_rel_tol;
+        lidar_min_plane_points_ = params.lidar_min_plane_points;
+        lidar_ransac_min_inliers_ = params.lidar_ransac_min_inliers;
+        lidar_ransac_radius_tolerance_ = params.lidar_ransac_radius_tolerance;
+        lidar_ransac_inlier_threshold_ = params.lidar_ransac_inlier_threshold;
+        lidar_template_min_ring_per_hole_ = params.lidar_template_min_ring_per_hole;
+        lidar_template_min_outer_per_hole_ = params.lidar_template_min_outer_per_hole;
+        lidar_template_max_inside_per_hole_ = params.lidar_template_max_inside_per_hole;
+        lidar_template_local_refine_radius_ = params.lidar_template_local_refine_radius;
+        lidar_template_local_refine_step_ = params.lidar_template_local_refine_step;
+
+        ROS_INFO("[LiDAR] lidar_center_extraction_mode=%s, strict_geometry=%s",
+                 lidar_center_extraction_mode_.c_str(),
+                 lidar_strict_geometry_ ? "true" : "false");
 
         filtered_pub_ = nh.advertise<sensor_msgs::PointCloud2>("filtered_cloud", 1);
         plane_pub_ = nh.advertise<sensor_msgs::PointCloud2>("plane_cloud", 1);
@@ -899,14 +1250,9 @@ public:
         }
 
         ROS_INFO("Extracted %zu edge points (mechanical LiDAR by neighbor distance).", edge_cloud_->size());
-        if (edge_cloud_->empty())
-        {
-            ROS_WARN("[LiDAR] No edge points found, skip.");
-            return;
-        }
 
-        // 4. 将边缘点对齐到 Z=0 平面
-        aligned_cloud_->reserve(edge_cloud_->size());
+        // 4. 将标定板平面点云/边缘点对齐到 Z=0 平面。模板法使用完整平面点云；
+        // RANSAC 保留旧逻辑，使用按 ring gap 提取的边缘点。
         Eigen::Vector3d z_axis(0.0, 0.0, 1.0);
         Eigen::Vector3d axis = normal.cross(z_axis);
         const double dot_nz = std::max(-1.0, std::min(1.0, normal.dot(z_axis)));
@@ -926,73 +1272,62 @@ public:
             R_align = rotation.toRotationMatrix();
         }
 
-        float average_z = 0.0f;
-        int cnt = 0;
+        Eigen::Matrix3d R_inv = R_align.inverse();
+        pcl::PointCloud<pcl::PointXYZ>::Ptr aligned_plane(new pcl::PointCloud<pcl::PointXYZ>);
+        aligned_plane->reserve(plane_cloud_->size());
+        double plane_average_z = 0.0;
+        for (const auto &pt : *plane_cloud_)
+        {
+            Eigen::Vector3d point(pt.x, pt.y, pt.z);
+            Eigen::Vector3d aligned_point = R_align * point;
+            aligned_plane->push_back(pcl::PointXYZ(aligned_point.x(), aligned_point.y(), 0.0));
+            plane_average_z += aligned_point.z();
+        }
+        plane_average_z /= std::max<int>(static_cast<int>(aligned_plane->size()), 1);
+
+        aligned_cloud_->reserve(edge_cloud_->size());
+        double edge_average_z = 0.0;
         for (const auto &pt : *edge_cloud_)
         {
             Eigen::Vector3d point(pt.x, pt.y, pt.z);
             Eigen::Vector3d aligned_point = R_align * point;
             aligned_cloud_->push_back(pcl::PointXYZ(aligned_point.x(), aligned_point.y(), 0.0));
-            average_z += static_cast<float>(aligned_point.z());
-            ++cnt;
+            edge_average_z += aligned_point.z();
         }
-        average_z /= std::max(cnt, 1);
+        edge_average_z /= std::max<int>(static_cast<int>(aligned_cloud_->size()), 1);
 
-        // 5. 在对齐后的点云中搜索圆候选
-        pcl::PointCloud<pcl::PointXYZ>::Ptr xy_cloud(new pcl::PointCloud<pcl::PointXYZ>(*aligned_cloud_));
-        std::vector<CircleCandidate> circle_candidates = detectCircleCandidates(xy_cloud);
-        for (const auto &candidate : circle_candidates)
+        ROS_INFO("[LiDAR] lidar_center_extraction_mode=%s (mechanical)", lidar_center_extraction_mode_.c_str());
+        if (wantsTemplate())
         {
-            center_z0_cloud_->push_back(candidate.center);
-        }
-
-        ROS_INFO("[LiDAR] Circle candidates found: %zu", circle_candidates.size());
-        for (size_t i = 0; i < circle_candidates.size(); ++i)
-        {
-            ROS_INFO("[LiDAR]   candidate %zu: center=(%.4f, %.4f), r=%.4f, inliers=%d",
-                     i,
-                     circle_candidates[i].center.x,
-                     circle_candidates[i].center.y,
-                     circle_candidates[i].radius,
-                     circle_candidates[i].inliers);
+            if (detectAiryTemplateCenters(aligned_plane, R_inv, plane_average_z, center_cloud))
+            {
+                *aligned_cloud_ = *aligned_plane;
+                ROS_INFO("[LiDAR] Template extraction succeeded.");
+                return;
+            }
+            ROS_WARN("[LiDAR] Template extraction failed.");
+            if (!allowRansacFallback())
+            {
+                return;
+            }
+            ROS_WARN("[LiDAR] Falling back to legacy RANSAC.");
         }
 
-        Eigen::Matrix3d R_inv = R_align.inverse();
-        CandidateScore best_candidate = selectBestCandidateGroup(circle_candidates, R_inv, average_z, qr_reference);
-        if (!best_candidate.found)
+        if (!wantsRansac())
         {
-            ROS_WARN("[LiDAR] Unable to find a candidate set that matches target's geometry");
+            return;
+        }
+        if (edge_cloud_->empty())
+        {
+            ROS_WARN("[LiDAR] No edge points found for legacy RANSAC.");
             return;
         }
 
-        if (qr_reference && qr_reference->size() == TARGET_NUM_CIRCLES)
+        pcl::PointCloud<pcl::PointXYZ>::Ptr xy_cloud(new pcl::PointCloud<pcl::PointXYZ>(*aligned_cloud_));
+        std::vector<CircleCandidate> circle_candidates = detectCircleCandidates(xy_cloud);
+        if (!selectAndBackProjectCircleCenters(circle_candidates, R_inv, edge_average_z, qr_reference, center_cloud))
         {
-            ROS_INFO("[LiDAR] Selected circle group by QR consistency: rmse=%.4f, geom_score=%.4f, geom_valid=%s, support=%d",
-                     best_candidate.rmse,
-                     best_candidate.geom_score,
-                     best_candidate.geom_valid ? "true" : "false",
-                     best_candidate.support);
-        }
-        else
-        {
-            ROS_INFO("[LiDAR] Selected circle group by geometry: geom_score=%.4f, geom_valid=%s, support=%d",
-                     best_candidate.geom_score,
-                     best_candidate.geom_valid ? "true" : "false",
-                     best_candidate.support);
-        }
-
-        // 6. 将选中的圆心逆变换回原始坐标系
-        for (const int idx : best_candidate.group)
-        {
-            const pcl::PointXYZ &center = circle_candidates[idx].center;
-            Eigen::Vector3d aligned_point(center.x, center.y, center.z + average_z);
-            Eigen::Vector3d original_point = R_inv * aligned_point;
-
-            pcl::PointXYZ center_point_origin;
-            center_point_origin.x = original_point.x();
-            center_point_origin.y = original_point.y();
-            center_point_origin.z = original_point.z();
-            center_cloud->points.push_back(center_point_origin);
+            ROS_WARN("[LiDAR] Legacy RANSAC failed.");
         }
     }
 
@@ -1095,10 +1430,24 @@ public:
         }
         average_z /= cnt;
 
-        // Airy sparse-cloud template matching should run before boundary
-        // extraction. The boundary path can fit circles to scan-line artifacts,
-        // while the template path searches for the empty four-hole pattern.
-        if (detectAiryTemplateCenters(aligned_cloud_, R.inverse(), average_z, center_cloud))
+        Eigen::Matrix3d R_inv = R.inverse();
+        ROS_INFO("[LiDAR] lidar_center_extraction_mode=%s (solid)", lidar_center_extraction_mode_.c_str());
+        if (wantsTemplate())
+        {
+            if (detectAiryTemplateCenters(aligned_cloud_, R_inv, average_z, center_cloud))
+            {
+                ROS_INFO("[LiDAR] Template extraction succeeded.");
+                return;
+            }
+            ROS_WARN("[LiDAR] Template extraction failed.");
+            if (!allowRansacFallback())
+            {
+                return;
+            }
+            ROS_WARN("[LiDAR] Falling back to legacy RANSAC.");
+        }
+
+        if (!wantsRansac())
         {
             return;
         }
@@ -1111,7 +1460,7 @@ public:
         if (airy_edge_cloud->size() >= 8)
         {
             std::vector<CircleCandidate> airy_candidates = detectCircleCandidates(airy_edge_cloud);
-            if (selectAndBackProjectCircleCenters(airy_candidates, R.inverse(), average_z, qr_reference, center_cloud))
+            if (selectAndBackProjectCircleCenters(airy_candidates, R_inv, average_z, qr_reference, center_cloud))
             {
                 *edge_cloud_ = *airy_edge_cloud;
                 return;
@@ -1142,92 +1491,13 @@ public:
         }
         ROS_INFO("Extracted %zu edge points.", edge_cloud_->size());
 
-        // 5. 对边缘点进行聚类
-        pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
-        tree->setInputCloud(edge_cloud_);
-    
-        std::vector<pcl::PointIndices> cluster_indices;
-        pcl::EuclideanClusterExtraction<pcl::PointXYZ> ec;
-        ec.setClusterTolerance(0.05); // 设置聚类距离阈值
-        ec.setMinClusterSize(50);     // 最小点数
-        ec.setMaxClusterSize(1000);   // 最大点数
-        ec.setSearchMethod(tree);
-        ec.setInputCloud(edge_cloud_);
-        ec.extract(cluster_indices);
-    
-        ROS_INFO("Number of edge clusters: %zu", cluster_indices.size());
-    
-        // 6. 对每个聚类进行圆拟合
-        center_z0_cloud_->reserve(4);
-        Eigen::Matrix3d R_inv = R.inverse();
-    
-        // 对每个聚类进行圆拟合
-        for (size_t i = 0; i < cluster_indices.size(); ++i) 
+        // 5. Legacy fallback remains the same circle-candidate RANSAC selector,
+        // now using the normal-boundary edge cloud if the Airy boundary cloud
+        // did not produce a valid four-center target.
+        std::vector<CircleCandidate> boundary_candidates = detectCircleCandidates(edge_cloud_);
+        if (!selectAndBackProjectCircleCenters(boundary_candidates, R_inv, average_z, qr_reference, center_cloud))
         {
-            pcl::PointCloud<pcl::PointXYZ>::Ptr cluster(new pcl::PointCloud<pcl::PointXYZ>);
-            for (const auto& idx : cluster_indices[i].indices) {
-                cluster->push_back(edge_cloud_->points[idx]);
-            }
-    
-            // 圆拟合
-            pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
-            pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
-            pcl::SACSegmentation<pcl::PointXYZ> seg;
-            seg.setOptimizeCoefficients(true);
-            seg.setModelType(pcl::SACMODEL_CIRCLE2D);
-            seg.setMethodType(pcl::SAC_RANSAC);
-            seg.setDistanceThreshold(0.01); // 设置距离阈值
-            seg.setMaxIterations(1000);     // 设置最大迭代次数
-            seg.setInputCloud(cluster);
-            seg.segment(*inliers, *coefficients);
-    
-            if (inliers->indices.size() > 0) 
-            {
-                if (coefficients->values.size() < 3)
-                {
-                    ROS_INFO("[LiDAR] Edge cluster %zu: size=%zu, inliers=%zu, invalid circle coefficients.",
-                             i, cluster->size(), inliers->indices.size());
-                    continue;
-                }
-
-                // 计算拟合误差
-                double error = 0.0;
-                for (const auto& idx : inliers->indices) 
-                {
-                    double dx = cluster->points[idx].x - coefficients->values[0];
-                    double dy = cluster->points[idx].y - coefficients->values[1];
-                    double distance = sqrt(dx * dx + dy * dy) - circle_radius_; // 距离误差
-                    error += abs(distance);
-                }
-                error /= inliers->indices.size();
-                ROS_INFO("[LiDAR] Edge cluster %zu: size=%zu, inliers=%zu, fitted_radius=%.4f, radius_error=%.4f",
-                         i,
-                         cluster->size(),
-                         inliers->indices.size(),
-                         coefficients->values[2],
-                         error);
-    
-                // 如果拟合误差较小，则认为是一个圆洞
-                if (error < 0.025) 
-                {
-                    // 将恢复后的圆心坐标添加到点云中
-                    pcl::PointXYZ center_point;
-                    center_point.x = coefficients->values[0];
-                    center_point.y = coefficients->values[1];
-                    center_point.z = 0.0;
-                    center_z0_cloud_->push_back(center_point);
-
-                    // 将圆心坐标逆变换回原始坐标系
-                    Eigen::Vector3d aligned_point(center_point.x, center_point.y, center_point.z + average_z);
-                    Eigen::Vector3d original_point = R_inv * aligned_point;
-
-                    pcl::PointXYZ center_point_origin;
-                    center_point_origin.x = original_point.x();
-                    center_point_origin.y = original_point.y();
-                    center_point_origin.z = original_point.z();
-                    center_cloud->points.push_back(center_point_origin);
-                }
-            }
+            ROS_WARN("[LiDAR] Legacy RANSAC failed on normal-boundary edge cloud.");
         }
     }
     // 获取中间结果的点云

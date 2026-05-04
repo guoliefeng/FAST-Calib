@@ -16,3 +16,7 @@ delta_height_qr_center: 0.35
 delta_width_circles: 0.5
 delta_height_circles: 0.4
 circle_radius: 0.12
+
+fast_calib:
+  # Keep these legacy vehicles on the previous LiDAR circle-center extractor.
+  lidar_center_extraction_mode: ransac

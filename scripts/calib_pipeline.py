@@ -446,6 +446,24 @@ def run_calib(job, g, roi, out_dir):
     ):
         if airy_template_key in fc:
             cmd.append(f"{airy_template_key}:={fc[airy_template_key]}")
+    for lidar_center_key in (
+        "lidar_center_extraction_mode",
+        "lidar_strict_geometry",
+        "lidar_geometry_side_rel_tol",
+        "lidar_geometry_diag_rel_tol",
+        "lidar_geometry_perimeter_rel_tol",
+        "lidar_min_plane_points",
+        "lidar_ransac_min_inliers",
+        "lidar_ransac_radius_tolerance",
+        "lidar_ransac_inlier_threshold",
+        "lidar_template_min_ring_per_hole",
+        "lidar_template_min_outer_per_hole",
+        "lidar_template_max_inside_per_hole",
+        "lidar_template_local_refine_radius",
+        "lidar_template_local_refine_step",
+    ):
+        if lidar_center_key in fc:
+            cmd.append(f"{lidar_center_key}:={fc[lidar_center_key]}")
     if ros_source == "bag" and fc.get("lidar_topic"):
         cmd.append(f"lidar_topic:={fc['lidar_topic']}")
     cmd.append(("pcd_path:=" if ros_source=="pcd" else "bag_path:=") + str(cloud))

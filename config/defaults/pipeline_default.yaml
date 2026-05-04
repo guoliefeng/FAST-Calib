@@ -25,6 +25,28 @@ fast_calib:
   package: fast_calib
   calib_launch: calib.launch
   pointcloud_source: bag
+  # LiDAR circle-center extraction:
+  #   auto     : four-hole empty-region template first, legacy RANSAC fallback
+  #   template : only four-hole empty-region template
+  #   ransac   : only legacy circle-candidate RANSAC
+  lidar_center_extraction_mode: auto
+  lidar_min_plane_points: 700
+  lidar_template_min_ring_per_hole: 2
+  lidar_template_min_outer_per_hole: 2
+  lidar_template_max_inside_per_hole: 8
+  lidar_template_local_refine_radius: 0.05
+  lidar_template_local_refine_step: 0.01
+  lidar_strict_geometry: true
+  lidar_geometry_side_rel_tol: 0.18
+  lidar_geometry_diag_rel_tol: 0.18
+  lidar_geometry_perimeter_rel_tol: 0.18
+  lidar_ransac_min_inliers: 10
+  lidar_ransac_radius_tolerance: 0.02
+  lidar_ransac_inlier_threshold: 0.012
+  # If a LiDAR driver changes coordinates by +90 deg around Z
+  # (x_new=-y_old, y_new=x_old), update each ROI x/y range for the new
+  # coordinate frame before running calibration. The template matcher works
+  # in the aligned board plane and does not hard-code any global yaw rotation.
   max_single_rmse: 0.080
   max_multi_rmse: 0.030
   max_group_rmse: 0.060
