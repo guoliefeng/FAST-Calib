@@ -183,7 +183,10 @@ def parse_intrinsic_node(node):
         def v(name, default=0.0):
             return float(node[lower_to_key[name]]) if name in lower_to_key else float(default)
 
-        D = np.array([v("k1"), v("k2"), v("p1"), v("p2"), v("k3")], dtype=np.float64)
+        D_names = ["k1", "k2", "p1", "p2", "k3"]
+        if any(name in lower_to_key for name in ("k4", "k5", "k6")):
+            D_names.extend(["k4", "k5", "k6"])
+        D = np.array([v(name) for name in D_names], dtype=np.float64)
         return K, D
 
     K_list = None
@@ -209,7 +212,9 @@ def parse_intrinsic_node(node):
             ]
         while len(D_list) < 5:
             D_list.append(0.0)
-        return K, np.asarray(D_list[:5], dtype=np.float64)
+        if len(D_list) > 5 and len(D_list) < 8:
+            D_list.extend([0.0] * (8 - len(D_list)))
+        return K, np.asarray(D_list[:8] if len(D_list) >= 8 else D_list[:5], dtype=np.float64)
 
     return None
 
