@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# One-command LiDAR center order inspection and audit.
+# One-command LiDAR center order inspection, audit, and PNG rendering.
 #
 # Usage:
 #   bash scripts/run_center_order_audit.sh /home/glf/dataDisk/calib/c2l/223/front
@@ -11,6 +11,8 @@ set -euo pipefail
 # Outputs:
 #   <data_dir>/_calib_output/05_center_inspect/<group>/open_in_cloudcompare.sh
 #   <data_dir>/_calib_output/05_center_order_audit/center_order_audit.csv
+#   <data_dir>/_calib_output/05_center_images/<group>_center_order.png
+#   <data_dir>/_calib_output/05_center_images/index.html
 
 DATA_DIR="${1:-}"
 GROUP_SPEC="${2:-all}"
@@ -41,13 +43,22 @@ python3 "$SCRIPT_DIR/audit_lidar_center_order.py" \
   --groups "$GROUP_SPEC" \
   --threshold "$THRESHOLD"
 
+python3 "$SCRIPT_DIR/render_lidar_center_images.py" \
+  --data-dir "$DATA_DIR" \
+  --groups "$GROUP_SPEC"
+
 AUDIT_DIR="$DATA_DIR/_calib_output/05_center_order_audit"
+IMAGE_DIR="$DATA_DIR/_calib_output/05_center_images"
 
 echo
 echo "[done] Audit result:"
 echo "  center_order_audit.csv: $AUDIT_DIR/center_order_audit.csv"
 echo "  suspicious_groups.txt: $AUDIT_DIR/suspicious_groups.txt"
 echo "  recommended_manual_permutation.txt: $AUDIT_DIR/recommended_manual_permutation.txt"
+echo
+echo "[done] Rendered center images:"
+echo "  image index: $IMAGE_DIR/index.html"
+echo "  open script: $IMAGE_DIR/open_center_images.sh"
 echo
 INSPECT_DIR="$DATA_DIR/_calib_output/05_center_inspect"
 if [ "$GROUP_SPEC" = "all" ] || [ "$GROUP_SPEC" = "*" ]; then
@@ -61,11 +72,14 @@ else
   OPEN_SCRIPT="$INSPECT_DIR/$FIRST_GROUP/open_in_cloudcompare.sh"
 fi
 
-echo "[view] To visually check one group:"
+echo "[view] To visually check one group in CloudCompare:"
 if [ -n "$OPEN_SCRIPT" ]; then
   echo "  bash \"$OPEN_SCRIPT\""
 else
   echo "  No open_in_cloudcompare.sh found under $INSPECT_DIR"
 fi
+echo
+echo "[view] To browse rendered PNGs:"
+echo "  bash \"$IMAGE_DIR/open_center_images.sh\""
 echo
 echo "[tip] suspicious_groups.txt lists groups whose current [0,1,2,3] order is probably wrong."
