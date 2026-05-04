@@ -16,6 +16,10 @@
 	<arg name="y_max" default="" />
 	<arg name="z_min" default="" />
 	<arg name="z_max" default="" />
+	<arg name="k3" default="" />
+	<arg name="k4" default="" />
+	<arg name="k5" default="" />
+	<arg name="k6" default="" />
 	<arg name="airy_hole_detector" default="true" />
 	<arg name="airy_boundary_radius" default="" />
 	<arg name="airy_boundary_min_angular_gap" default="" />
@@ -40,6 +44,10 @@
 	<param if="$(eval arg('y_max') != '')" name="y_max" value="$(arg y_max)" />
 	<param if="$(eval arg('z_min') != '')" name="z_min" value="$(arg z_min)" />
 	<param if="$(eval arg('z_max') != '')" name="z_max" value="$(arg z_max)" />
+	<param if="$(eval arg('k3') != '')" name="k3" value="$(arg k3)" />
+	<param if="$(eval arg('k4') != '')" name="k4" value="$(arg k4)" />
+	<param if="$(eval arg('k5') != '')" name="k5" value="$(arg k5)" />
+	<param if="$(eval arg('k6') != '')" name="k6" value="$(arg k6)" />
 	<param name="airy_hole_detector" value="$(arg airy_hole_detector)" />
 	<param if="$(eval arg('airy_boundary_radius') != '')" name="airy_boundary_radius" value="$(arg airy_boundary_radius)" />
 	<param if="$(eval arg('airy_boundary_min_angular_gap') != '')" name="airy_boundary_min_angular_gap" value="$(arg airy_boundary_min_angular_gap)" />

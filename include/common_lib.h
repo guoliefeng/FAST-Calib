@@ -57,7 +57,7 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(Common::Point,
 // 参数结构体
 struct Params {
   double x_min, x_max, y_min, y_max, z_min, z_max;
-  double fx, fy, cx, cy, k1, k2, p1, p2;
+  double fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, k5, k6;
   double marker_size, delta_width_qr_center, delta_height_qr_center;
   double delta_width_circles, delta_height_circles, circle_radius;
   int min_detected_markers;
@@ -92,6 +92,10 @@ Params loadParameters(ros::NodeHandle &nh) {
   nh.param("k2", params.k2, 0.10996870793601);
   nh.param("p1", params.p1, 0.000157303079833973);
   nh.param("p2", params.p2, 0.000544930726278493);
+  nh.param("k3", params.k3, 0.0);
+  nh.param("k4", params.k4, 0.0);
+  nh.param("k5", params.k5, 0.0);
+  nh.param("k6", params.k6, 0.0);
   nh.param("marker_size", params.marker_size, 0.2);
   nh.param("delta_width_qr_center", params.delta_width_qr_center, 0.55);
   nh.param("delta_height_qr_center", params.delta_height_qr_center, 0.35);

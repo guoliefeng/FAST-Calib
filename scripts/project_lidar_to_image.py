@@ -70,9 +70,13 @@ def project_points(points_lidar, Rcl, Pcl, K, dist, image_shape, min_depth, max_
 
     x = points_cam[:, 0] / z
     y = points_cam[:, 1] / z
-    k1, k2, p1, p2, k3 = dist
+    k1, k2, p1, p2, k3, k4, k5, k6 = dist
     r2 = x * x + y * y
-    radial = 1.0 + k1 * r2 + k2 * r2 * r2 + k3 * r2 * r2 * r2
+    r4 = r2 * r2
+    r6 = r4 * r2
+    radial_num = 1.0 + k1 * r2 + k2 * r4 + k3 * r6
+    radial_den = 1.0 + k4 * r2 + k5 * r4 + k6 * r6
+    radial = radial_num / radial_den
     x_dist = x * radial + 2.0 * p1 * x * y + p2 * (r2 + 2.0 * x * x)
     y_dist = y * radial + p1 * (r2 + 2.0 * y * y) + 2.0 * p2 * x * y
 
@@ -252,7 +256,16 @@ def main():
         [0.0, cfg["fy"], cfg["cy"]],
         [0.0, 0.0, 1.0],
     ], dtype=np.float64)
-    dist = np.array([cfg["k1"], cfg["k2"], cfg["p1"], cfg["p2"], 0.0], dtype=np.float64)
+    dist = np.array([
+        cfg.get("k1", 0.0),
+        cfg.get("k2", 0.0),
+        cfg.get("p1", 0.0),
+        cfg.get("p2", 0.0),
+        cfg.get("k3", 0.0),
+        cfg.get("k4", 0.0),
+        cfg.get("k5", 0.0),
+        cfg.get("k6", 0.0),
+    ], dtype=np.float64)
     Rcl, Pcl = load_extrinsic(args.extrinsic)
 
     out_dir = Path(args.output_dir)

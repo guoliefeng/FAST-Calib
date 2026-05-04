@@ -417,12 +417,23 @@ def roi_for_group(data, group):
     return b.get("rois",{}).get(group,b.get("default_roi"))
 
 def run_calib(job, g, roi, out_dir):
-    fc=job["fast_calib"]; source=fc.get("pointcloud_source","pcd"); cloud=Path(g["pcd"] if source=="pcd" else g["bag"]); img=Path(g["image"]); mkdir(out_dir)
+    fc=job["fast_calib"]; source=fc.get("pointcloud_source","pcd"); img=Path(g["image"]); mkdir(out_dir)
+    ros_source=source
+    if source=="pcd":
+        cloud=Path(g["pcd"])
+    elif source=="board_pcd":
+        ros_source="pcd"
+        cloud=Path(g["board_pcd"])
+    else:
+        cloud=Path(g["bag"])
     for stale in ("circle_center_record.txt", "single_calib_result.txt", "colored_cloud.pcd", "run.log"):
         p = out_dir / stale
         if p.exists():
             p.unlink()
-    cmd=["roslaunch",fc.get("package","fast_calib"),fc.get("calib_launch","calib.launch"),"rviz:=false",f"config_file:={fc['config_file']}",f"pointcloud_source:={source}",f"image_path:={img}",f"output_path:={out_dir}","exit_after_save:=true",f"x_min:={roi['x_min']}",f"x_max:={roi['x_max']}",f"y_min:={roi['y_min']}",f"y_max:={roi['y_max']}",f"z_min:={roi['z_min']}",f"z_max:={roi['z_max']}"]
+    cmd=["roslaunch",fc.get("package","fast_calib"),fc.get("calib_launch","calib.launch"),"rviz:=false",f"config_file:={fc['config_file']}",f"pointcloud_source:={ros_source}",f"image_path:={img}",f"output_path:={out_dir}","exit_after_save:=true",f"x_min:={roi['x_min']}",f"x_max:={roi['x_max']}",f"y_min:={roi['y_min']}",f"y_max:={roi['y_max']}",f"z_min:={roi['z_min']}",f"z_max:={roi['z_max']}"]
+    camera_cfg=load_yaml(fc["config_file"])
+    for dist_key in ("k3","k4","k5","k6"):
+        cmd.append(f"{dist_key}:={camera_cfg.get(dist_key,0)}")
     for airy_key in ("airy_hole_detector", "airy_boundary_radius", "airy_boundary_min_angular_gap", "airy_boundary_min_neighbors"):
         if airy_key in fc:
             cmd.append(f"{airy_key}:={fc[airy_key]}")
@@ -435,9 +446,9 @@ def run_calib(job, g, roi, out_dir):
     ):
         if airy_template_key in fc:
             cmd.append(f"{airy_template_key}:={fc[airy_template_key]}")
-    if source == "bag" and fc.get("lidar_topic"):
+    if ros_source == "bag" and fc.get("lidar_topic"):
         cmd.append(f"lidar_topic:={fc['lidar_topic']}")
-    cmd.append(("pcd_path:=" if source=="pcd" else "bag_path:=") + str(cloud))
+    cmd.append(("pcd_path:=" if ros_source=="pcd" else "bag_path:=") + str(cloud))
     proc=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
     log=strip_ansi(proc.stdout); (out_dir/"run.log").write_text(log,encoding="utf-8")
     rm=RMSE_RE.search(log); cnt=NEED_COUNT_RE.search(log) or MAIN_COUNT_RE.search(log)
@@ -759,8 +770,8 @@ def choose_multi(records, min_groups, max_multi, mode, max_group_rmse=None):
 
 def stage_calibrate(job, groups):
     _, out=job_paths(job); single=mkdir(out/"03_single"); multi=mkdir(out/"04_multi"); roi_data=load_yaml(out/"02_roi"/"roi_groups.yaml"); fc=job["fast_calib"]
-    max_single=float(fc.get("max_single_rmse",0.03)); max_multi=float(fc.get("max_multi_rmse",0.03)); max_group_rmse=float(fc.get("max_group_rmse",max(2.0*max_multi,0.06))); min_groups=int(fc.get("multi_min_groups",3)); multi_mode=str(fc.get("multi_mode","max_groups"))
-    rows=[]; records={}; four_center_groups=[]; non_four_center_rows=[]
+    max_single=float(fc.get("max_single_rmse",0.03)); max_multi=float(fc.get("max_multi_rmse",0.03)); max_group_rmse=float(fc.get("max_group_rmse",max(2.0*max_multi,0.06))); min_groups=int(fc.get("multi_min_groups",3)); multi_mode=str(fc.get("multi_mode","max_groups")); filter_high_single=boolv(fc.get("filter_high_single_for_multi",False),False)
+    rows=[]; records={}; records_all={}; four_center_groups=[]; usable_four_center_groups=[]; non_four_center_rows=[]
     for g in groups:
         roi=roi_for_group(roi_data,g["group"])
         if not roi: rows.append({"group":g["group"],"ok":False,"reason":"missing_roi"}); continue
@@ -770,7 +781,9 @@ def stage_calibrate(job, groups):
         four_center_ok = (a is not None and b is not None)
         r["four_center_ok"]=four_center_ok
         if four_center_ok:
-            records[g["group"]]=(a,b); four_center_groups.append(g["group"])
+            records_all[g["group"]]=(a,b); four_center_groups.append(g["group"])
+            if r.get("ok") or not filter_high_single:
+                records[g["group"]]=(a,b); usable_four_center_groups.append(g["group"])
         else:
             non_four_center_rows.append({
                 "group": g["group"],
@@ -786,16 +799,20 @@ def stage_calibrate(job, groups):
     with (multi/"non_four_center_groups.csv").open("w",encoding="utf-8",newline="") as f:
         w=csv.DictWriter(f,fieldnames=["group","reason","lidar_centers","qr_centers","rmse","log_path"])
         w.writeheader(); w.writerows(non_four_center_rows)
-    write_center_records(multi, records, rows)
+    write_center_records(multi, records_all, rows)
     if multi_mode in ("all_centers","all_4centers","all_detected","all_center_records"):
         selected=choose_all_center_records(records,min_groups); candidates=[]; history_raw=[]
     else:
         selected,candidates,history_raw=choose_multi(records,min_groups,max_multi,multi_mode,max_group_rmse)
     if selected is None:
-        write_yaml(multi/"multi_result.yaml",{"status":"failed","reason":"not_enough_4center_groups","four_center_groups":four_center_groups,"non_four_center_groups":non_four_center_rows})
+        failed_result={"status":"failed","reason":"not_enough_usable_4center_groups","four_center_groups":four_center_groups,"usable_four_center_groups":usable_four_center_groups,"non_four_center_groups":non_four_center_rows}
+        write_yaml(multi/"multi_result.yaml",failed_result)
+        write_yaml(out/"final_extrinsic.yaml",failed_result)
         return
     cur=selected["groups"]; R=selected["R"]; t=selected["t"]; rmse=selected["rmse"]; per=selected["per_group"]; per_all=selected.get("per_group_all") or residuals_for_records(records,R,t)
-    write_center_records(multi, records, rows, cur, per_all)
+    if records_all.keys() != records.keys():
+        per_all=residuals_for_records(records_all,R,t)
+    write_center_records(multi, records_all, rows, cur, per_all)
     write_selection_tables(multi, (candidates if candidates else history_raw), cur, per_all)
     write_permutation_tables(multi, records, cur, per_all, selected.get("best_permutations_all"))
     history=[
@@ -808,7 +825,7 @@ def stage_calibrate(job, groups):
             for c in candidates:
                 w.writerow({"group_count":len(c["groups"]),"rmse":f"{c['rmse']:.6f}","groups":" ".join(c["groups"])})
     T=np.eye(4); T[:3,:3]=R; T[:3,3]=t
-    result={"status":"ok" if rmse<=max_multi and (not per or max(per.values())<=max_group_rmse) else "warn","rmse":ff(rmse),"max_multi_rmse":ff(max_multi),"max_group_rmse":ff(max_group_rmse),"multi_mode":multi_mode,"selection_policy":selected.get("policy",multi_mode),"four_center_groups":four_center_groups,"non_four_center_groups":non_four_center_rows,"selected_groups":cur,"final_group_residuals":{k:ff(v) for k,v in sorted(per_all.items(), key=lambda kv:natural_key(kv[0]))},"T_cam_lidar":[[ff(x) for x in row] for row in T.tolist()],"Rcl":[[ff(x) for x in row] for row in R.tolist()],"Pcl":[ff(x) for x in t.tolist()],"history":history}
+    result={"status":"ok" if rmse<=max_multi and (not per or max(per.values())<=max_group_rmse) else "warn","rmse":ff(rmse),"max_multi_rmse":ff(max_multi),"max_group_rmse":ff(max_group_rmse),"multi_mode":multi_mode,"selection_policy":selected.get("policy",multi_mode),"four_center_groups":four_center_groups,"usable_four_center_groups":usable_four_center_groups,"non_four_center_groups":non_four_center_rows,"selected_groups":cur,"final_group_residuals":{k:ff(v) for k,v in sorted(per_all.items(), key=lambda kv:natural_key(kv[0]))},"T_cam_lidar":[[ff(x) for x in row] for row in T.tolist()],"Rcl":[[ff(x) for x in row] for row in R.tolist()],"Pcl":[ff(x) for x in t.tolist()],"history":history}
     if selected.get("best_permutations_all"):
         result["permutation_note"]="qr_centers are reordered per group before joint SVD; tuple means reordered_qr = original_qr[tuple]."
         result["selected_qr_permutations"]={g:[int(i) for i in selected.get("permutations",{}).get(g,())] for g in cur}
@@ -827,13 +844,22 @@ def stage_calibrate(job, groups):
 # -----------------------------------------------------------------------------
 def camera_from_config(path):
     c=load_yaml(path)
-    return float(c["fx"]),float(c["fy"]),float(c["cx"]),float(c["cy"]),float(c.get("k1",0)),float(c.get("k2",0)),float(c.get("p1",0)),float(c.get("p2",0)),float(c.get("k3",0))
+    return float(c["fx"]),float(c["fy"]),float(c["cx"]),float(c["cy"]),float(c.get("k1",0)),float(c.get("k2",0)),float(c.get("p1",0)),float(c.get("p2",0)),float(c.get("k3",0)),float(c.get("k4",0)),float(c.get("k5",0)),float(c.get("k6",0))
 
 def stage_verify(job, groups):
     if not boolv(job.get("verify",{}).get("enabled",True),True): return
     import cv2
-    _,out=job_paths(job); verify=mkdir(out/"05_verify"); final=load_yaml(out/"final_extrinsic.yaml"); T=np.asarray(final["T_cam_lidar"],dtype=float); selected=set(final.get("selected_groups",[]))
-    fx,fy,cx,cy,k1,k2,p1,p2,k3=camera_from_config(job["fast_calib"]["config_file"]); K=np.array([[fx,0,cx],[0,fy,cy],[0,0,1]],dtype=float); D=np.array([k1,k2,p1,p2,k3],dtype=float)
+    _,out=job_paths(job); verify=mkdir(out/"05_verify"); final=load_yaml(out/"final_extrinsic.yaml")
+    if "T_cam_lidar" not in final:
+        rows=[{"group":g["group"],"status":"skipped","reason":"no_valid_extrinsic","points_projected":0,"image":g["image"],"board_pcd":g["board_pcd"],"overlay":""} for g in groups]
+        with (verify/"verify_summary.csv").open("w",encoding="utf-8",newline="") as f:
+            w=csv.DictWriter(f,fieldnames=["group","status","reason","points_projected","image","board_pcd","overlay"])
+            w.writeheader(); w.writerows(rows)
+        print("[verify] skipped: no valid T_cam_lidar in final_extrinsic.yaml")
+        return
+    T=np.asarray(final["T_cam_lidar"],dtype=float); selected=set(final.get("selected_groups",[]))
+    fx,fy,cx,cy,k1,k2,p1,p2,k3,k4,k5,k6=camera_from_config(job["fast_calib"]["config_file"]); K=np.array([[fx,0,cx],[0,fy,cy],[0,0,1]],dtype=float)
+    D=np.array([k1,k2,p1,p2,k3,k4,k5,k6] if any(abs(x)>1e-12 for x in (k4,k5,k6)) else [k1,k2,p1,p2,k3],dtype=float)
     rows=[]; written=[]
     for g in groups:
         if selected and g["group"] not in selected and not boolv(job.get("verify",{}).get("all_groups",False),False): continue

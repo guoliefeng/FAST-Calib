@@ -1,0 +1,21 @@
+# front camera config
+fx: 1018.4302236779
+fy: 1018.4905664419
+cx: 952.7119504539
+cy: 540.4431102901
+k1: 1.9793544235
+k2: 0.4731672325
+p1: 0.0001217362
+p2: 0.0000668662
+k3: 0.0074345862
+k4: 2.3813688074
+k5: 1.1408872626
+k6: 0.0752560560
+
+# FAST-Calib target parameters
+marker_size: 0.20
+delta_width_qr_center: 0.55
+delta_height_qr_center: 0.35
+delta_width_circles: 0.5
+delta_height_circles: 0.4
+circle_radius: 0.12

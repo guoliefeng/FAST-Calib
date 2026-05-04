@@ -30,12 +30,7 @@ sensors:
     camera_config: config/vehicles/221/cameras/rear_right.yaml
     roi_profile: config/roi_profiles/hesai/rear_right.yaml
     lidar_topic: auto
-  rear_left:
-    enabled: false
-    data_dir: /home/glf/dataDisk/calib/0426/data_221_rear_left
-    camera_config: config/vehicles/221/cameras/rear_left.yaml
-    roi_profile: config/roi_profiles/airy/rear_left.yaml
-    lidar_topic: auto
+
     # fast_calib:
     #   lidar_detector_type: airy
     #   airy_template_detector: true

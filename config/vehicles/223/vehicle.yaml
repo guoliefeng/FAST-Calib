@@ -1,0 +1,61 @@
+vehicle_id: '223'
+sensors:
+  front:
+    enabled: true
+    data_dir: /home/glf/dataDisk/calib/223/front
+    camera_config: config/vehicles/223/cameras/front.yaml
+    roi_profile: config/roi_profiles/hesai/front.yaml
+    lidar_topic: auto
+    roi:
+      coarse: {x_min: -2.30, x_max: 0.60, y_min: -5.20, y_max: -3.40, z_min: -1.35, z_max: 0.45}
+      detector:
+        board_span: {x: [0.30, 2.30], y: [0.05, 1.70], z: [0.30, 1.80]}
+    fast_calib:
+      pointcloud_source: board_pcd
+      multi_mode: permutation_search
+  rear:
+    enabled: false
+    data_dir: /home/glf/dataDisk/calib/223/rear
+    camera_config: config/vehicles/223/cameras/rear.yaml
+    roi_profile: config/roi_profiles/hesai/rear.yaml
+    lidar_topic: auto
+  front_left:
+    enabled: true
+    data_dir: /home/glf/dataDisk/calib/223/front_left
+    camera_config: config/vehicles/223/cameras/front_left.yaml
+    roi_profile: config/roi_profiles/hesai/front_left.yaml
+    lidar_topic: auto
+    fast_calib:
+      pointcloud_source: board_pcd
+      multi_mode: permutation_search
+  rear_right:
+    enabled: false
+    data_dir: /home/glf/dataDisk/calib/223/rear_right
+    camera_config: config/vehicles/223/cameras/rear_right.yaml
+    roi_profile: config/roi_profiles/hesai/rear_right.yaml
+    lidar_topic: auto
+
+    # fast_calib:
+    #   lidar_detector_type: airy
+    #   airy_template_detector: true
+    #   airy_template_grid: 0.03
+    #   airy_template_angle_step_deg: 3.0
+    #   airy_template_ring_band: 0.025
+    #   airy_template_min_score: 80.0
+
+c2c_calibration:
+  default_group: right
+  dictionary: DICT_6X6_250
+  marker_id: 1
+  marker_size_m: 0.80
+  groups:
+    left:
+      enabled: true
+      cam0: rear_left
+      cam1: front_left
+      data_dir: /home/glf/dataDisk/calib/223/aruco_single_id1_data/left_pair
+    right:
+      enabled: true
+      cam0: rear_right
+      cam1: front_right
+      data_dir: /home/glf/dataDisk/calib/223/aruco_single_id1_data/right_pair

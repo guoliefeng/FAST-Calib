@@ -1,0 +1,20 @@
+fx: 1014.2310098596
+fy: 1014.1958051519
+cx: 953.6051145030
+cy: 546.9654668122
+k1: 1.5357749309
+k2: 0.4661091878
+p1: 0.0000060345
+p2: 0.0000651148
+k3: 0.0195844151
+k4: 1.9361409646
+k5: 0.9692886808
+k6: 0.1117787185
+
+# FAST-Calib target parameters
+marker_size: 0.20
+delta_width_qr_center: 0.55
+delta_height_qr_center: 0.35
+delta_width_circles: 0.5
+delta_height_circles: 0.4
+circle_radius: 0.12

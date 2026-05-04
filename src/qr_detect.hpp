@@ -44,7 +44,17 @@ class QRDetect
                                                 0,         0,        1);
                                                 
       // Initialize distortion coefficients
-      distCoeffs_ = (cv::Mat_<float>(1, 5) << params.k1, params.k2, params.p1, params.p2, 0);
+      if (std::fabs(params.k4) > 1e-12 || std::fabs(params.k5) > 1e-12 ||
+          std::fabs(params.k6) > 1e-12)
+      {
+        distCoeffs_ = (cv::Mat_<float>(1, 8) << params.k1, params.k2, params.p1, params.p2,
+                                                  params.k3, params.k4, params.k5, params.k6);
+      }
+      else
+      {
+        distCoeffs_ = (cv::Mat_<float>(1, 5) << params.k1, params.k2, params.p1, params.p2,
+                                                  params.k3);
+      }
 
       // Initialize QR dictionary
       dictionary_ = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_250);
