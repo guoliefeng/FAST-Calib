@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+import yaml
 
 try:
     import matplotlib
@@ -41,6 +42,15 @@ except Exception as exc:
 
 
 CENTER_RE = re.compile(r"\{([^}]*)\}")
+
+
+def project_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def load_yaml(path: Path) -> Dict:
+    with path.expanduser().open("r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
 
 
 def natural_key(v: str) -> List[object]:
@@ -240,7 +250,8 @@ def render_group_image(group: str,
                        audit_row: Optional[Dict[str, str]],
                        out_png: Path,
                        max_points: int,
-                       dpi: int) -> None:
+                       dpi: int,
+                       cloud_point_size: float) -> None:
     lidar, _ = read_circle_record(record)
     origin, axis_u, axis_v = board_projection_axes(lidar)
     center_2d = project_to_board(lidar, origin, axis_u, axis_v)
@@ -262,9 +273,9 @@ def render_group_image(group: str,
         ax.scatter(
             raw_2d[:, 0],
             raw_2d[:, 1],
-            s=1.15,
-            c="#4f5965",
-            alpha=0.58,
+            s=cloud_point_size,
+            c="#303946",
+            alpha=0.72,
             linewidths=0,
             marker=".",
             label=f"board point cloud ({raw_2d.shape[0]}/{raw_count} pts)",
@@ -342,21 +353,15 @@ def write_html_index(out_root: Path, rows: List[Dict[str, str]]) -> None:
     (out_root / "index.html").write_text("\n".join(lines), encoding="utf-8")
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="Render LiDAR circle-center order PNGs for quick visual inspection.")
-    ap.add_argument("--data-dir", required=True, help="Example: /home/glf/dataDisk/calib/c2l/223/front")
-    ap.add_argument("--output-dir", help="Default: <data-dir>/_calib_output")
-    ap.add_argument("--groups", default="all", help="Comma-separated groups or all. Default: all")
-    ap.add_argument("--audit-csv", help="Default: <output_dir>/05_center_order_audit/center_order_audit.csv")
-    ap.add_argument("--max-points", type=int, default=80000, help="Maximum PCD points to draw per group. Default: 80000")
-    ap.add_argument("--dpi", type=int, default=160, help="PNG DPI. Default: 160")
-    args = ap.parse_args()
-
-    data_dir = Path(args.data_dir).expanduser().resolve()
-    output_dir = Path(args.output_dir).expanduser().resolve() if args.output_dir else data_dir / "_calib_output"
-    audit_csv = Path(args.audit_csv).expanduser().resolve() if args.audit_csv else output_dir / "05_center_order_audit" / "center_order_audit.csv"
+def render_dataset(data_dir: Path,
+                   output_dir: Path,
+                   groups: str,
+                   audit_csv: Optional[Path],
+                   max_points: int,
+                   dpi: int,
+                   cloud_point_size: float) -> Tuple[int, Path]:
     audit_rows = load_audit_rows(audit_csv)
-    records = resolve_records(output_dir, args.groups)
+    records = resolve_records(output_dir, groups)
     out_root = mkdir(output_dir / "05_center_images")
 
     html_rows: List[Dict[str, str]] = []
@@ -369,7 +374,7 @@ def main() -> None:
         print(f"  record: {record}")
         print(f"  cloud : {cloud if cloud else '(not found; centers only)'}")
         print(f"  image : {out_png}")
-        render_group_image(group, record, cloud, audit_row, out_png, args.max_points, args.dpi)
+        render_group_image(group, record, cloud, audit_row, out_png, max_points, dpi, cloud_point_size)
         html_rows.append({
             "group": group,
             "image_rel": str(out_png.relative_to(out_root)),
@@ -385,6 +390,97 @@ def main() -> None:
     open_script.chmod(0o755)
     print(f"[render] index: {out_root / 'index.html'}")
     print(f"[render] open : {open_script}")
+    return len(records), out_root
+
+
+def resolve_vehicle_sensors(vehicle: str, sensors_arg: str, vehicle_config: str = "") -> List[Tuple[str, Path]]:
+    cfg_path = Path(vehicle_config).expanduser().resolve() if vehicle_config else project_root() / "config" / "vehicles" / str(vehicle) / "vehicle.yaml"
+    if not cfg_path.exists():
+        raise FileNotFoundError(f"vehicle config not found: {cfg_path}")
+
+    cfg = load_yaml(cfg_path)
+    sensors = cfg.get("sensors") or {}
+    if not isinstance(sensors, dict) or not sensors:
+        raise RuntimeError(f"No sensors found in {cfg_path}")
+
+    spec = str(sensors_arg or "all").strip()
+    if spec.lower() in ("all", "*"):
+        names = list(sensors.keys())
+    elif spec.lower() == "enabled":
+        names = [name for name, scfg in sensors.items() if bool((scfg or {}).get("enabled", False))]
+    else:
+        names = [x.strip() for x in spec.split(",") if x.strip()]
+
+    tasks: List[Tuple[str, Path]] = []
+    missing: List[str] = []
+    for name in names:
+        if name not in sensors:
+            missing.append(name)
+            continue
+        data_dir = (sensors.get(name) or {}).get("data_dir")
+        if not data_dir:
+            print(f"[vehicle][WARN] {vehicle}/{name}: empty data_dir; skipped")
+            continue
+        tasks.append((name, Path(str(data_dir)).expanduser().resolve()))
+
+    if missing:
+        raise RuntimeError(f"Unknown sensor(s) for vehicle {vehicle}: {', '.join(missing)}")
+    if not tasks:
+        raise RuntimeError(f"No renderable sensors selected for vehicle {vehicle}")
+    return tasks
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Render LiDAR circle-center order PNGs for quick visual inspection.")
+    ap.add_argument("-v", "--vehicle", help="vehicle id, e.g. 221. Renders sensors from config/vehicles/<vehicle>/vehicle.yaml")
+    ap.add_argument("-s", "--sensors", default="all", help="For --vehicle: all, enabled, or comma-separated sensor names. Default: all")
+    ap.add_argument("--vehicle-config", help="Override vehicle.yaml path for --vehicle")
+    ap.add_argument("--data-dir", help="Render one dataset directly. Example: /home/glf/dataDisk/calib/c2l/223/front")
+    ap.add_argument("--output-dir", help="Default: <data-dir>/_calib_output")
+    ap.add_argument("--groups", default="all", help="Comma-separated groups or all. Default: all")
+    ap.add_argument("--audit-csv", help="Default: <output_dir>/05_center_order_audit/center_order_audit.csv")
+    ap.add_argument("--max-points", type=int, default=80000, help="Maximum PCD points to draw per group. Default: 80000")
+    ap.add_argument("--dpi", type=int, default=160, help="PNG DPI. Default: 160")
+    ap.add_argument("--cloud-point-size", type=float, default=4.0, help="Matplotlib marker size for board cloud points. Default: 4.0")
+    args = ap.parse_args()
+
+    if args.vehicle and args.data_dir:
+        raise RuntimeError("Use either --vehicle or --data-dir, not both.")
+    if not args.vehicle and not args.data_dir:
+        raise RuntimeError("Provide --data-dir for one dataset, or -v/--vehicle for a vehicle.")
+    if args.vehicle and args.output_dir:
+        raise RuntimeError("--output-dir is only supported with --data-dir mode.")
+    if args.vehicle and args.audit_csv:
+        raise RuntimeError("--audit-csv is only supported with --data-dir mode.")
+
+    if args.vehicle:
+        total = 0
+        outputs: List[Tuple[str, int, Path]] = []
+        for sensor, data_dir in resolve_vehicle_sensors(args.vehicle, args.sensors, args.vehicle_config or ""):
+            output_dir = data_dir / "_calib_output"
+            audit_csv = output_dir / "05_center_order_audit" / "center_order_audit.csv"
+            print(f"\n[vehicle] {args.vehicle}/{sensor}")
+            print(f"  data_dir  : {data_dir}")
+            print(f"  output_dir: {output_dir}")
+            try:
+                count, out_root = render_dataset(data_dir, output_dir, args.groups, audit_csv, args.max_points, args.dpi, args.cloud_point_size)
+            except Exception as exc:
+                print(f"[vehicle][FAILED] {args.vehicle}/{sensor}: {exc}")
+                continue
+            total += count
+            outputs.append((sensor, count, out_root))
+
+        if not outputs:
+            raise RuntimeError(f"No images generated for vehicle {args.vehicle}")
+        print(f"\n[vehicle] rendered {total} image(s) for vehicle {args.vehicle}")
+        for sensor, count, out_root in outputs:
+            print(f"  {sensor}: {count} image(s), index={out_root / 'index.html'}")
+        return
+
+    data_dir = Path(args.data_dir).expanduser().resolve()
+    output_dir = Path(args.output_dir).expanduser().resolve() if args.output_dir else data_dir / "_calib_output"
+    audit_csv = Path(args.audit_csv).expanduser().resolve() if args.audit_csv else output_dir / "05_center_order_audit" / "center_order_audit.csv"
+    render_dataset(data_dir, output_dir, args.groups, audit_csv, args.max_points, args.dpi, args.cloud_point_size)
 
 
 if __name__ == "__main__":
