@@ -1,7 +1,7 @@
 vehicle_id: '223'
 sensors:
   front:
-    enabled: true
+    enabled: false
     data_dir: /home/glf/dataDisk/calib/223/front
     camera_config: config/vehicles/223/cameras/front.yaml
     roi_profile: config/roi_profiles/hesai_new/front.yaml
@@ -9,13 +9,13 @@ sensors:
     fast_calib:
       multi_mode: permutation_search
   rear:
-    enabled: false
+    enabled: true
     data_dir: /home/glf/dataDisk/calib/223/rear
     camera_config: config/vehicles/223/cameras/rear.yaml
     roi_profile: config/roi_profiles/hesai_new/rear.yaml
     lidar_topic: auto
   front_left:
-    enabled: true
+    enabled: false
     data_dir: /home/glf/dataDisk/calib/223/front_left
     camera_config: config/vehicles/223/cameras/front_left.yaml
     roi_profile: config/roi_profiles/hesai_new/front_left.yaml
@@ -23,7 +23,7 @@ sensors:
     fast_calib:
       multi_mode: permutation_search
   rear_right:
-    enabled: false
+    enabled: true
     data_dir: /home/glf/dataDisk/calib/223/rear_right
     camera_config: config/vehicles/223/cameras/rear_right.yaml
     roi_profile: config/roi_profiles/hesai_new/rear_right.yaml

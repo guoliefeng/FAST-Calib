@@ -459,6 +459,8 @@ def run_calib(job, g, roi, out_dir):
         "lidar_template_min_ring_per_hole",
         "lidar_template_min_outer_per_hole",
         "lidar_template_max_inside_per_hole",
+        "lidar_template_max_inside_support_ratio",
+        "lidar_template_min_support_per_hole",
         "lidar_template_local_refine_radius",
         "lidar_template_local_refine_step",
     ):

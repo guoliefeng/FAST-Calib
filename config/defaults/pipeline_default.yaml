@@ -33,16 +33,18 @@ fast_calib:
   lidar_min_plane_points: 700
   lidar_template_min_ring_per_hole: 2
   lidar_template_min_outer_per_hole: 2
-  lidar_template_max_inside_per_hole: 8
+  lidar_template_max_inside_per_hole: 6
+  lidar_template_max_inside_support_ratio: 0.35
+  lidar_template_min_support_per_hole: 3.0
   lidar_template_local_refine_radius: 0.05
   lidar_template_local_refine_step: 0.01
   lidar_strict_geometry: true
-  lidar_geometry_side_rel_tol: 0.18
-  lidar_geometry_diag_rel_tol: 0.18
-  lidar_geometry_perimeter_rel_tol: 0.18
-  lidar_ransac_min_inliers: 10
+  lidar_geometry_side_rel_tol: 0.15
+  lidar_geometry_diag_rel_tol: 0.15
+  lidar_geometry_perimeter_rel_tol: 0.15
+  lidar_ransac_min_inliers: 12
   lidar_ransac_radius_tolerance: 0.02
-  lidar_ransac_inlier_threshold: 0.012
+  lidar_ransac_inlier_threshold: 0.010
   # If a LiDAR driver changes coordinates by +90 deg around Z
   # (x_new=-y_old, y_new=x_old), update each ROI x/y range for the new
   # coordinate frame before running calibration. The template matcher works
@@ -50,7 +52,7 @@ fast_calib:
   max_single_rmse: 0.080
   max_multi_rmse: 0.030
   max_group_rmse: 0.060
-  multi_min_groups: 3
+  multi_min_groups: 6
   multi_mode: robust_max_groups
 verify:
   enabled: true

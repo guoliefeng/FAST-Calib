@@ -48,6 +48,8 @@ private:
     int lidar_template_min_ring_per_hole_;
     int lidar_template_min_outer_per_hole_;
     int lidar_template_max_inside_per_hole_;
+    double lidar_template_max_inside_support_ratio_;
+    double lidar_template_min_support_per_hole_;
     double lidar_template_local_refine_radius_;
     double lidar_template_local_refine_step_;
 
@@ -82,6 +84,8 @@ private:
         int ring = 0;
         int outer = 0;
         int far_outer = 0;
+        double support = 0.0;
+        double inside_support_ratio = std::numeric_limits<double>::infinity();
         double score = -std::numeric_limits<double>::infinity();
     };
 
@@ -663,18 +667,32 @@ private:
                 ++stats.far_outer;
             }
         }
-        stats.score = 3.0 * stats.ring +
-                      0.4 * stats.outer +
-                      0.1 * stats.far_outer -
-                      6.0 * stats.inside;
+        stats.support = static_cast<double>(stats.ring) +
+                        0.5 * static_cast<double>(stats.outer) +
+                        0.15 * static_cast<double>(stats.far_outer);
+        stats.inside_support_ratio =
+            static_cast<double>(stats.inside) /
+            std::max(1.0, static_cast<double>(stats.ring + stats.outer));
+
+        stats.score = 4.0 * stats.ring +
+                      0.7 * stats.outer +
+                      0.2 * stats.far_outer -
+                      8.0 * stats.inside -
+                      10.0 * stats.inside_support_ratio;
         return stats;
     }
 
     bool holeStatsFeasible(const HoleStats &stats) const
     {
-        return stats.ring >= lidar_template_min_ring_per_hole_ &&
-               stats.outer >= lidar_template_min_outer_per_hole_ &&
-               stats.inside <= lidar_template_max_inside_per_hole_;
+        const bool enough_ring_or_outer =
+            stats.ring >= lidar_template_min_ring_per_hole_ ||
+            stats.outer >= std::max(2, 2 * lidar_template_min_outer_per_hole_);
+        const bool enough_support =
+            stats.support >= lidar_template_min_support_per_hole_;
+        const bool empty_enough =
+            stats.inside <= lidar_template_max_inside_per_hole_ &&
+            stats.inside_support_ratio <= lidar_template_max_inside_support_ratio_;
+        return enough_ring_or_outer && enough_support && empty_enough;
     }
 
     TemplateEval evaluateTemplate(const pcl::PointCloud<pcl::PointXYZ>::Ptr &aligned_plane,
@@ -715,8 +733,9 @@ private:
     {
         for (int i = 0; i < TARGET_NUM_CIRCLES; ++i)
         {
-            ROS_INFO("[Template] %s hole_%d: score=%.2f inside=%d ring=%d outer=%d far_outer=%d",
-                     prefix.c_str(), i, holes[i].score, holes[i].inside, holes[i].ring,
+            ROS_INFO("[Template] %s hole_%d: score=%.2f support=%.2f inside_ratio=%.3f inside=%d ring=%d outer=%d far_outer=%d",
+                     prefix.c_str(), i, holes[i].score, holes[i].support,
+                     holes[i].inside_support_ratio, holes[i].inside, holes[i].ring,
                      holes[i].outer, holes[i].far_outer);
         }
     }
@@ -1117,12 +1136,20 @@ public:
         lidar_template_min_ring_per_hole_ = params.lidar_template_min_ring_per_hole;
         lidar_template_min_outer_per_hole_ = params.lidar_template_min_outer_per_hole;
         lidar_template_max_inside_per_hole_ = params.lidar_template_max_inside_per_hole;
+        lidar_template_max_inside_support_ratio_ = params.lidar_template_max_inside_support_ratio;
+        lidar_template_min_support_per_hole_ = params.lidar_template_min_support_per_hole;
         lidar_template_local_refine_radius_ = params.lidar_template_local_refine_radius;
         lidar_template_local_refine_step_ = params.lidar_template_local_refine_step;
 
         ROS_INFO("[LiDAR] lidar_center_extraction_mode=%s, strict_geometry=%s",
                  lidar_center_extraction_mode_.c_str(),
                  lidar_strict_geometry_ ? "true" : "false");
+        ROS_INFO("[Template] min_ring=%d min_outer=%d max_inside=%d max_inside_support_ratio=%.3f min_support=%.2f",
+                 lidar_template_min_ring_per_hole_,
+                 lidar_template_min_outer_per_hole_,
+                 lidar_template_max_inside_per_hole_,
+                 lidar_template_max_inside_support_ratio_,
+                 lidar_template_min_support_per_hole_);
 
         filtered_pub_ = nh.advertise<sensor_msgs::PointCloud2>("filtered_cloud", 1);
         plane_pub_ = nh.advertise<sensor_msgs::PointCloud2>("plane_cloud", 1);
