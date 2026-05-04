@@ -107,6 +107,56 @@ def make_cross_points(center: Sequence[float], half_size: float, samples_per_axi
     return pts
 
 
+def sample_line(p0: Sequence[float], p1: Sequence[float], n: int = 40) -> List[List[float]]:
+    """Sample points on a line segment. Used as visual order/direction markers."""
+    pts: List[List[float]] = []
+    denom = max(n - 1, 1)
+    for i in range(n):
+        t = i / denom
+        pts.append([
+            float(p0[0]) * (1.0 - t) + float(p1[0]) * t,
+            float(p0[1]) * (1.0 - t) + float(p1[1]) * t,
+            float(p0[2]) * (1.0 - t) + float(p1[2]) * t,
+        ])
+    return pts
+
+
+def write_indexed_center_pc_ds(group_out: Path,
+                               lidar: Sequence[Sequence[float]],
+                               sphere_radius: float) -> Dict[str, str]:
+    """
+    Export one PCD per center index, plus order and direction markers.
+
+    In CloudCompare object tree you can directly see:
+      center_0_sphere.pcd
+      center_1_sphere.pcd
+      center_2_sphere.pcd
+      center_3_sphere.pcd
+      order_0_1_2_3_dotted.pcd
+      arrow_0_to_1.pcd
+    """
+    out: Dict[str, str] = {}
+
+    for i, c in enumerate(lidar):
+        p = group_out / f"center_{i}_sphere.pcd"
+        pts = make_sphere_points(c, sphere_radius * (1.0 + 0.25 * i))
+        write_xyz_pcd(p, pts)
+        out[f"center_{i}_sphere"] = str(p)
+
+    order_pts: List[List[float]] = []
+    for a, b in [(0, 1), (1, 2), (2, 3), (3, 0)]:
+        order_pts.extend(sample_line(lidar[a], lidar[b], 40))
+    order_pcd = group_out / "order_0_1_2_3_dotted.pcd"
+    write_xyz_pcd(order_pcd, order_pts)
+    out["order_0_1_2_3_dotted"] = str(order_pcd)
+
+    arrow_pcd = group_out / "arrow_0_to_1.pcd"
+    write_xyz_pcd(arrow_pcd, sample_line(lidar[0], lidar[1], 70))
+    out["arrow_0_to_1"] = str(arrow_pcd)
+
+    return out
+
+
 def write_centers_csv(path: Path, centers: Sequence[Sequence[float]]) -> None:
     mkdir(path.parent)
     with path.open("w", encoding="utf-8", newline="") as f:
@@ -231,10 +281,27 @@ def find_cloud(data_dir: Path, output_dir: Path, group: str) -> Optional[Path]:
 
 def write_cloudcompare_script(path: Path, cloud: Optional[Path], sphere_pcd: Path, cross_pcd: Path) -> None:
     lines = ["#!/usr/bin/env bash", "set -e"]
+    group_out = path.parent
     cmd = ["CloudCompare"]
+
     if cloud:
         cmd += ["-O", f"\"{cloud}\""]
-    cmd += ["-O", f"\"{sphere_pcd}\"", "-O", f"\"{cross_pcd}\""]
+
+    extra_pc_ds = [
+        sphere_pcd,
+        cross_pcd,
+        group_out / "center_0_sphere.pcd",
+        group_out / "center_1_sphere.pcd",
+        group_out / "center_2_sphere.pcd",
+        group_out / "center_3_sphere.pcd",
+        group_out / "order_0_1_2_3_dotted.pcd",
+        group_out / "arrow_0_to_1.pcd",
+    ]
+
+    for p in extra_pc_ds:
+        if Path(p).exists():
+            cmd += ["-O", f"\"{p}\""]
+
     lines.append(" ".join(cmd))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     path.chmod(0o755)
@@ -263,10 +330,11 @@ def inspect_group(data_dir: Path, output_dir: Path, group: str, args: argparse.N
     write_xyz_pcd(spheres_pcd, sphere_pts)
     write_xyz_pcd(crosses_pcd, cross_pts)
     write_centers_csv(centers_csv, lidar)
+    indexed_pc_ds = write_indexed_center_pc_ds(group_out, lidar, args.sphere_radius)
     write_manual_template(manual_yaml, group, record, cloud, lidar, qr)
     write_cloudcompare_script(cc_script, cloud, spheres_pcd, crosses_pcd)
 
-    return {
+    row = {
         "group": group,
         "record": str(record),
         "cloud": str(cloud) if cloud else "",
@@ -276,6 +344,8 @@ def inspect_group(data_dir: Path, output_dir: Path, group: str, args: argparse.N
         "manual_yaml": str(manual_yaml),
         "cloudcompare_script": str(cc_script),
     }
+    row.update(indexed_pc_ds)
+    return row
 
 
 def main() -> None:
