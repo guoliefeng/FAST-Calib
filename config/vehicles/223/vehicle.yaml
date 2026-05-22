@@ -14,6 +14,9 @@ sensors:
     camera_config: config/vehicles/223/cameras/rear.yaml
     roi_profile: config/roi_profiles/hesai_new/rear.yaml
     lidar_topic: auto
+    fast_calib:
+      multi_mode: permutation_search
+      max_group_rmse: 0.035
   front_left:
     enabled: false
     data_dir: /home/glf/dataDisk/calib/223/front_left
@@ -23,7 +26,7 @@ sensors:
     fast_calib:
       multi_mode: permutation_search
   rear_right:
-    enabled: true
+    enabled: false
     data_dir: /home/glf/dataDisk/calib/223/rear_right
     camera_config: config/vehicles/223/cameras/rear_right.yaml
     roi_profile: config/roi_profiles/hesai_new/rear_right.yaml
@@ -38,7 +41,7 @@ sensors:
     #   airy_template_min_score: 80.0
 
 c2c_calibration:
-  default_group: right
+  default_group: left
   dictionary: DICT_6X6_250
   marker_id: 1
   marker_size_m: 0.80

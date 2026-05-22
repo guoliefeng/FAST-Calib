@@ -18,6 +18,7 @@ import argparse
 import csv
 import math
 import re
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -31,6 +32,15 @@ DEFAULT_CONFIG_ROOT = "$(find fast_calib)/config/vehicles"
 DEFAULT_REPORT_ROOT = Path("/home/glf/dataDisk/calib/vehicle_calib_report")
 DEFAULT_C2C_ROOT = Path("/home/glf/dataDisk/calib/c2c")
 DEFAULT_C2C_RESULT_NAME = "auto"
+DEFAULT_LIDAR_TOPIC_FRAME_MAP = "velodyne_first:lidar_first,velodyne_second:lidar_second"
+DEFAULT_BASE_FRAME = "base_link"
+DEFAULT_CAMERA_FRAME_SUFFIX = "_camera_frame"
+DEFAULT_BASE_LIDAR_TF_BY_VEHICLE = {
+    "221": {
+        "lidar_first": [7.38763, 1.3081, 1.6, 0.00559065, 0.00440275, 0.18853, 0.982042],
+        "lidar_second": [-7.41613, -1.38264, 1.6, 0.00169926, -0.00675155, 0.983151, -0.182665],
+    },
+}
 
 
 def resolve_ros_path(path_text: Any) -> str:
@@ -45,8 +55,18 @@ def resolve_ros_path(path_text: Any) -> str:
         except Exception:
             here = Path(__file__).resolve()
             for parent in [here.parent] + list(here.parents):
-                if parent.name == pkg and (parent / "package.xml").exists():
+                package_xml = parent / "package.xml"
+                if not package_xml.exists():
+                    continue
+                if parent.name == pkg:
                     return str(parent)
+                try:
+                    root = ET.parse(str(package_xml)).getroot()
+                    package_name = root.findtext("name", default="").strip()
+                    if package_name == pkg:
+                        return str(parent)
+                except Exception:
+                    pass
             raise RuntimeError("Cannot resolve $(find {}). Source your catkin workspace.".format(pkg))
 
     return str(Path(pattern.sub(repl, text)).expanduser().resolve())
@@ -146,6 +166,33 @@ def rotmat_to_quat_xyzw(R: np.ndarray) -> List[float]:
     return rounded_list(q)
 
 
+def quat_xyzw_to_rotmat(q: Iterable[Any]) -> np.ndarray:
+    q = np.asarray(list(q), dtype=np.float64).reshape(4)
+    n = float(np.dot(q, q))
+    if n <= 0.0:
+        raise ValueError("Quaternion norm must be positive")
+    q = q / math.sqrt(n)
+    x, y, z, w = q
+    xx, yy, zz = x * x, y * y, z * z
+    xy, xz, yz = x * y, x * z, y * z
+    wx, wy, wz = w * x, w * y, w * z
+    return np.array([
+        [1.0 - 2.0 * (yy + zz), 2.0 * (xy - wz), 2.0 * (xz + wy)],
+        [2.0 * (xy + wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx)],
+        [2.0 * (xz - wy), 2.0 * (yz + wx), 1.0 - 2.0 * (xx + yy)],
+    ], dtype=np.float64)
+
+
+def transform_from_xyz_quat(args: Iterable[Any], name: str) -> np.ndarray:
+    values = np.asarray(list(args), dtype=np.float64).reshape(-1)
+    if values.size != 7:
+        raise ValueError("{} must contain 7 values: x y z qx qy qz qw".format(name))
+    T = np.eye(4, dtype=np.float64)
+    T[:3, :3] = quat_xyzw_to_rotmat(values[3:7])
+    T[:3, 3] = values[:3]
+    return T
+
+
 def rpy_from_R_zyx(R: np.ndarray) -> List[float]:
     sy = math.sqrt(R[0, 0] ** 2 + R[1, 0] ** 2)
     if sy > 1e-8:
@@ -182,6 +229,76 @@ def fmt(v: Any) -> str:
         return "{:.6f}".format(float(v))
     except Exception:
         return str(v)
+
+
+def fmt_tf(v: Any) -> str:
+    return "{:.6f}".format(float(v))
+
+
+def sanitize_frame_piece(text: Any) -> str:
+    return re.sub(r"[^A-Za-z0-9_]+", "_", str(text)).strip("_")
+
+
+def parse_lidar_topic_frame_map(text: str) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for item in str(text or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if ":" not in item:
+            raise ValueError("Invalid lidar topic/frame map item '{}'; expected topic:frame".format(item))
+        topic, frame = item.split(":", 1)
+        out[topic.strip()] = frame.strip()
+    return out
+
+
+def parse_xyz_quat_text(text: str, name: str) -> List[float]:
+    values = [float(v) for v in str(text).replace(",", " ").split()]
+    if len(values) != 7:
+        raise ValueError("{} must contain 7 numbers: x y z qx qy qz qw".format(name))
+    return values
+
+
+def load_base_lidar_tf_yaml(path: Path) -> Tuple[str, Dict[str, List[float]]]:
+    data = load_yaml(path)
+    base_frame = str(data.get("base_frame") or DEFAULT_BASE_FRAME)
+    lidars = data.get("lidars") if isinstance(data.get("lidars"), dict) else data
+    out: Dict[str, List[float]] = {}
+    if isinstance(lidars, dict):
+        for frame, entry in lidars.items():
+            if isinstance(entry, dict):
+                xyz = entry.get("xyz") or entry.get("translation")
+                quat = entry.get("quaternion_xyzw") or entry.get("quat_xyzw") or entry.get("q")
+                if xyz is not None and quat is not None:
+                    out[str(frame)] = [float(v) for v in list(xyz) + list(quat)]
+                    continue
+                args = entry.get("xyz_quat") or entry.get("args")
+                if args is not None:
+                    out[str(frame)] = parse_xyz_quat_text(" ".join(str(v) for v in args), str(frame))
+                    continue
+            elif isinstance(entry, (list, tuple)):
+                out[str(frame)] = [float(v) for v in entry]
+    return base_frame, out
+
+
+def resolve_base_lidar_transforms(args, vehicle_id: str) -> Tuple[str, Dict[str, np.ndarray]]:
+    base_frame = args.base_frame
+    raw: Dict[str, List[float]] = {}
+    if args.base_lidar_tf_yaml:
+        base_frame, raw = load_base_lidar_tf_yaml(Path(args.base_lidar_tf_yaml).expanduser().resolve())
+    elif vehicle_id in DEFAULT_BASE_LIDAR_TF_BY_VEHICLE:
+        raw = dict(DEFAULT_BASE_LIDAR_TF_BY_VEHICLE[vehicle_id])
+
+    if args.base_lidar_first:
+        raw["lidar_first"] = parse_xyz_quat_text(args.base_lidar_first, "--base-lidar-first")
+    if args.base_lidar_second:
+        raw["lidar_second"] = parse_xyz_quat_text(args.base_lidar_second, "--base-lidar-second")
+
+    transforms = {
+        frame: transform_from_xyz_quat(values, "T_{}_{}".format(base_frame, frame))
+        for frame, values in raw.items()
+    }
+    return base_frame, transforms
 
 
 def matrix_entry(T: np.ndarray) -> Dict[str, Any]:
@@ -515,6 +632,132 @@ def write_csv(path: Path, extrinsics: Dict[str, Any]) -> None:
             })
 
 
+def camera_frame_name(camera: str, suffix: str) -> str:
+    return "{}{}".format(sanitize_frame_piece(camera), suffix)
+
+
+def lidar_frame_for_extrinsic(ext: Dict[str, Any], topic_frame_map: Dict[str, str]) -> str:
+    topic = str(ext.get("lidar_topic") or "")
+    return topic_frame_map.get(topic, topic)
+
+
+def transform_entry(T: np.ndarray) -> Dict[str, Any]:
+    T = np.asarray(T, dtype=np.float64)
+    T_inv = invert_T(T)
+    return {
+        "translation_xyz": rounded_list(T[:3, 3]),
+        "quaternion_xyzw": rotmat_to_quat_xyzw(T[:3, :3]),
+        "T": rounded_matrix(T),
+        "T_inverse": rounded_matrix(T_inv),
+    }
+
+
+def static_node_xml(name: str, T_parent_child: np.ndarray, parent: str, child: str) -> str:
+    t = T_parent_child[:3, 3]
+    q = rotmat_to_quat_xyzw(T_parent_child[:3, :3])
+    args = " ".join(
+        [fmt_tf(v) for v in list(t) + list(q)] + [parent, child]
+    )
+    return (
+        '    <node pkg="tf2_ros" type="static_transform_publisher" '
+        'name="{}" args="{}" />'
+    ).format(sanitize_frame_piece(name), args)
+
+
+def build_tf_outputs(extrinsics: Dict[str, Any], args, vehicle_id: str) -> Tuple[Dict[str, Any], List[str], List[str]]:
+    topic_frame_map = parse_lidar_topic_frame_map(args.lidar_topic_frame_map)
+    base_frame, base_lidar_T = resolve_base_lidar_transforms(args, vehicle_id)
+    camera_suffix = args.camera_frame_suffix
+    warnings = []
+
+    base_entries: Dict[str, Any] = {}
+    tree_nodes: List[str] = [
+        '<launch>',
+        '    <!-- base_frame -> lidar_frame -->',
+    ]
+    direct_base_nodes: List[str] = [
+        '<launch>',
+        '    <!-- Direct base_frame -> camera_frame transforms for engineering conversion.',
+        '         Do not launch together with the chained base->lidar->camera TF tree. -->',
+    ]
+
+    for lidar_frame, T_base_lidar in sorted(base_lidar_T.items()):
+        tree_nodes.append(static_node_xml(
+            "{}_{}_broadcaster".format(base_frame, lidar_frame),
+            T_base_lidar,
+            base_frame,
+            lidar_frame,
+        ))
+    tree_nodes.append('')
+    tree_nodes.append('    <!-- lidar_frame -> camera_frame -->')
+
+    for camera, ext in extrinsics.items():
+        lidar_frame = lidar_frame_for_extrinsic(ext, topic_frame_map)
+        child_frame = camera_frame_name(camera, camera_suffix)
+        if not lidar_frame:
+            warnings.append("No lidar frame for camera {}; missing lidar_topic".format(camera))
+            continue
+
+        T_cam_lidar = mat4(ext["T_cam_lidar"], "{}.T_cam_lidar".format(camera))
+        T_lidar_cam = invert_T(T_cam_lidar)
+        tree_nodes.append(static_node_xml(
+            "{}_{}_broadcaster".format(lidar_frame, child_frame),
+            T_lidar_cam,
+            lidar_frame,
+            child_frame,
+        ))
+
+        entry = {
+            "source": ext.get("source"),
+            "lidar_topic": ext.get("lidar_topic"),
+            "lidar_frame": lidar_frame,
+            "camera_frame": child_frame,
+            "T_lidar_camera": transform_entry(T_lidar_cam),
+        }
+
+        if lidar_frame in base_lidar_T:
+            T_base_cam = base_lidar_T[lidar_frame] @ T_lidar_cam
+            direct_base_nodes.append(static_node_xml(
+                "{}_{}_broadcaster".format(base_frame, child_frame),
+                T_base_cam,
+                base_frame,
+                child_frame,
+            ))
+            entry["base_frame"] = base_frame
+            entry["T_base_camera"] = transform_entry(T_base_cam)
+        else:
+            warnings.append("No {} -> {} transform; skipped base output for {}".format(
+                base_frame, lidar_frame, camera
+            ))
+
+        base_entries[camera] = entry
+
+    tree_nodes.append('</launch>')
+    direct_base_nodes.append('</launch>')
+
+    obj = {
+        "vehicle_id": vehicle_id,
+        "base_frame": base_frame,
+        "frame_convention": {
+            "T_lidar_camera": "ROS TF parent=lidar_frame child=camera_frame; maps camera-frame points into lidar frame.",
+            "T_base_camera": "ROS TF parent=base_frame child=camera_frame; maps camera-frame points into base frame.",
+        },
+        "lidar_topic_frame_map": topic_frame_map,
+        "base_lidar_transforms": {
+            frame: transform_entry(T)
+            for frame, T in sorted(base_lidar_T.items())
+        },
+        "cameras": base_entries,
+        "warnings": warnings,
+    }
+    return obj, tree_nodes, direct_base_nodes
+
+
+def write_lines(path: Path, lines: List[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Summarize all vehicle camera-to-LiDAR extrinsics, deriving missing cameras from C2C results."
@@ -533,6 +776,20 @@ def main() -> None:
                         help="Output directory. Defaults to vehicle_calib_report/<vehicle>")
     parser.add_argument("--output-prefix", default="",
                         help="Output prefix. Defaults to <vehicle>_all_camera_extrinsics")
+    parser.add_argument("--emit-tf-launch", action="store_true",
+                        help="Also write lidar->camera and base_link->camera static TF launch files.")
+    parser.add_argument("--base-frame", default=DEFAULT_BASE_FRAME,
+                        help="Base frame name used for base->lidar and base->camera outputs.")
+    parser.add_argument("--base-lidar-tf-yaml", default="",
+                        help="Optional YAML with base_frame and lidars mapping to xyz/quaternion_xyzw.")
+    parser.add_argument("--base-lidar-first", default="",
+                        help="Override base->lidar_first as: x y z qx qy qz qw.")
+    parser.add_argument("--base-lidar-second", default="",
+                        help="Override base->lidar_second as: x y z qx qy qz qw.")
+    parser.add_argument("--lidar-topic-frame-map", default=DEFAULT_LIDAR_TOPIC_FRAME_MAP,
+                        help="Comma-separated lidar_topic:tf_frame map, e.g. velodyne_first:lidar_first.")
+    parser.add_argument("--camera-frame-suffix", default=DEFAULT_CAMERA_FRAME_SUFFIX,
+                        help="Suffix used to build camera TF child frame names.")
     args = parser.parse_args()
 
     vehicle_id, vehicle_dir, vehicle_yaml, vehicle_cfg = load_vehicle_config(args)
@@ -603,6 +860,19 @@ def main() -> None:
     print("[SAVE] compact  :", compact_path)
     print("[SAVE] readable :", readable_path)
     print("[SAVE] csv      :", csv_path)
+    if args.emit_tf_launch:
+        tf_obj, tree_launch_lines, base_launch_lines = build_tf_outputs(extrinsics, args, vehicle_id)
+        tf_yaml_path = report_dir / "{}_base_camera_extrinsics.yaml".format(prefix)
+        tf_launch_path = report_dir / "{}_tf.launch".format(prefix)
+        base_tf_launch_path = report_dir / "{}_base_camera_tf.launch".format(prefix)
+        write_yaml(tf_yaml_path, tf_obj)
+        write_lines(tf_launch_path, tree_launch_lines)
+        write_lines(base_tf_launch_path, base_launch_lines)
+        print("[SAVE] base/tf  :", tf_yaml_path)
+        print("[SAVE] launch   :", tf_launch_path)
+        print("[SAVE] base lnch:", base_tf_launch_path)
+        for w in tf_obj.get("warnings", []):
+            print("[WARN]", w)
     if warnings:
         for w in warnings:
             print("[WARN]", w)
