@@ -1,0 +1,20 @@
+# Camera parameters for rear left camera of vehicle 228
+fx: 1012.5178599667
+fy: 1012.3823603999
+cx: 960.2081623359
+cy: 540.1937575499
+k1: 0.2582821381
+k2: -0.1224570290
+p1: 0.0000286131
+p2: -0.0000061687
+k3: -0.0060523662
+k4: 0.6525824713
+k5: -0.1148358630
+k6: -0.0374448857
+# FAST-Calib target parameters
+marker_size: 0.20
+delta_width_qr_center: 0.55
+delta_height_qr_center: 0.35
+delta_width_circles: 0.5
+delta_height_circles: 0.4
+circle_radius: 0.12
