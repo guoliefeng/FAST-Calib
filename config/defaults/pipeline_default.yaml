@@ -15,6 +15,9 @@ extract_pcd:
   # enough samples around the four circular holes. Use "all" to accumulate
   # all frames from each bag into one PCD.
   #
+  # For dense Hesai/Velodyne data, "all" makes ROI/calib very slow (~1M pts/group).
+  # Prefer: run_vehicle_calib.py --profile hesai_fast  (middle frame + board_pcd).
+  #
   # Supported values:
   #   all, middle, last, or an integer frame index.
   frame: all

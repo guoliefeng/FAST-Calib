@@ -1,0 +1,58 @@
+vehicle_id: '225'
+sensors:
+  front:
+    enabled: false
+    data_dir: /home/glf/dataDisk/calib/225/front
+    camera_config: config/vehicles/225/cameras/front.yaml
+    roi_profile: config/roi_profiles/hesai_new/front.yaml
+    lidar_topic: auto
+    fast_calib:
+      multi_mode: permutation_search
+  rear:
+    enabled: true
+    data_dir: /home/glf/dataDisk/calib/225/rear
+    camera_config: config/vehicles/225/cameras/rear.yaml
+    roi_profile: config/roi_profiles/hesai_new/rear.yaml
+    lidar_topic: auto
+    fast_calib:
+      multi_mode: permutation_search
+      max_group_rmse: 0.035
+  front_left:
+    enabled: true
+    data_dir: /home/glf/dataDisk/calib/225/front_left
+    camera_config: config/vehicles/225/cameras/front_left.yaml
+    roi_profile: config/roi_profiles/hesai_new/front_left.yaml
+    lidar_topic: auto
+    fast_calib:
+      multi_mode: permutation_search
+  rear_right:
+    enabled: true
+    data_dir: /home/glf/dataDisk/calib/225/rear_right
+    camera_config: config/vehicles/225/cameras/rear_right.yaml
+    roi_profile: config/roi_profiles/hesai_new/rear_right.yaml
+    lidar_topic: auto
+
+    # fast_calib:
+    #   lidar_detector_type: airy
+    #   airy_template_detector: true
+    #   airy_template_grid: 0.03
+    #   airy_template_angle_step_deg: 3.0
+    #   airy_template_ring_band: 0.025
+    #   airy_template_min_score: 80.0
+
+c2c_calibration:
+  default_group: left
+  dictionary: DICT_6X6_250
+  marker_id: 1
+  marker_size_m: 0.80
+  groups:
+    left:
+      enabled: true
+      cam0: rear_left
+      cam1: front_left
+      data_dir: /home/glf/dataDisk/calib/225/left_pair
+    right:
+      enabled: true
+      cam0: rear_right
+      cam1: front_right
+      data_dir: /home/glf/dataDisk/calib/225/right_pair

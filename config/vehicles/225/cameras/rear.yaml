@@ -1,0 +1,22 @@
+# rear/common camera config
+
+fx: 1014.8943476695
+fy: 1014.8570815405
+cx: 953.6231372678
+cy: 537.1279149719
+k1: 1.8163513300
+k2: 0.2406150697
+p1: 0.0001635786
+p2: 0.0000630523
+k3: -0.0152858644
+k4: 2.2183252674
+k5: 0.8417623930
+k6: -0.0184973476
+
+# FAST-Calib target parameters
+marker_size: 0.20
+delta_width_qr_center: 0.55
+delta_height_qr_center: 0.35
+delta_width_circles: 0.5
+delta_height_circles: 0.4
+circle_radius: 0.12

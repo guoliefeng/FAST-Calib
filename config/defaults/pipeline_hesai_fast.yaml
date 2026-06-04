@@ -1,0 +1,22 @@
+# Fast profile for dense mechanical LiDAR (Hesai / Velodyne-style).
+# Use with: run_vehicle_calib.py --vehicle 225 --profile hesai_fast
+#
+# Compared to pipeline_default.yaml (frame=all + bag):
+#   - ROI export: one middle frame (~40k pts) instead of all frames (~1.1M pts)
+#   - Calibrate: board_candidate.pcd instead of full bag accumulation
+#   - Multi select: robust_max_groups instead of permutation_search
+#   - Verify: only selected groups
+
+extract_pcd:
+  frame: middle
+  frame_stride: 1
+  max_frames: 0
+  overwrite: false
+
+fast_calib:
+  pointcloud_source: board_pcd
+  multi_mode: robust_max_groups
+  filter_high_single_for_multi: true
+
+verify:
+  all_groups: false

@@ -16,6 +16,11 @@ import yaml
 PROJECT_ROOT = Path("/home/glf/dataDisk/calib/FAST-Calib_ws/src/FAST-Calib").resolve()
 PIPELINE = PROJECT_ROOT / "scripts" / "calib_pipeline.py"
 DEFAULT_CFG = PROJECT_ROOT / "config" / "defaults" / "pipeline_default.yaml"
+PROFILE_CFG = {
+    "default": None,
+    "hesai_fast": PROJECT_ROOT / "config" / "defaults" / "pipeline_hesai_fast.yaml",
+    "fast": PROJECT_ROOT / "config" / "defaults" / "pipeline_hesai_fast.yaml",
+}
 VEHICLE_ROOT = PROJECT_ROOT / "config" / "vehicles"
 GENERATED_ROOT = PROJECT_ROOT / "config" / "generated_jobs"
 REPORT_ROOT = Path("/home/glf/dataDisk/calib/vehicle_calib_report").resolve()
@@ -112,8 +117,18 @@ def detect_topic(data_dir: str) -> str:
     print(f"[WARN] expected one point cloud topic in {bags[0]}, found={pcs}")
     return ""
 
-def build_job(vehicle: str, sensor: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
+def load_pipeline_defaults(profile: str) -> Dict[str, Any]:
     defaults = load_yaml(DEFAULT_CFG)
+    profile_path = PROFILE_CFG.get(str(profile or "default").strip().lower())
+    if profile_path:
+        if not profile_path.exists():
+            raise FileNotFoundError(f"pipeline profile not found: {profile_path}")
+        defaults = deep_merge(defaults, load_yaml(profile_path))
+        print(f"[profile] merged {profile_path.name}")
+    return defaults
+
+def build_job(vehicle: str, sensor: str, cfg: Dict[str, Any], profile: str = "default") -> Dict[str, Any]:
+    defaults = load_pipeline_defaults(profile)
     camera_cfg = rpath(cfg["camera_config"])
     roi_profile = rpath(cfg["roi_profile"])
     if not camera_cfg.exists(): raise FileNotFoundError(f"camera_config not found: {camera_cfg}")
@@ -265,6 +280,12 @@ def main():
     ap.add_argument("--sensors", default="", help="comma-separated positions, e.g. front,rear")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--stop-on-error", action="store_true")
+    ap.add_argument(
+        "--profile",
+        default="default",
+        choices=sorted(PROFILE_CFG.keys()),
+        help="Pipeline preset. hesai_fast: middle-frame PCD + board_pcd calib (much faster on Hesai).",
+    )
     args = ap.parse_args()
 
     vfile = VEHICLE_ROOT / args.vehicle / "vehicle.yaml"
@@ -279,7 +300,7 @@ def main():
     gen = GENERATED_ROOT / args.vehicle; gen.mkdir(parents=True, exist_ok=True)
     jobs = {}
     for n in names:
-        job = build_job(args.vehicle, n, sensors[n])
+        job = build_job(args.vehicle, n, sensors[n], profile=args.profile)
         p = gen / f"{n}.pipeline.yaml"
         write_yaml(p, job); jobs[n] = p
         print(f"[JOB] {args.vehicle}/{n}: {p}")
