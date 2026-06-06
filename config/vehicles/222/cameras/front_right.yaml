@@ -1,0 +1,22 @@
+# 228-front_right camera config.
+
+
+fx: 1017.5545271084
+fy: 1017.5705355037
+cx: 956.9899642843
+cy: 539.1087870142
+k1: 0.4279025388
+k2: -0.2606743889
+p1: 0.0000385404
+p2: 0.0000626534
+k3: -0.0231525907
+k4: 0.8275804970
+k5: -0.1983103821
+k6: -0.1085463688
+# FAST-Calib target parameters. Keep consistent with the current four-hole board.
+marker_size: 0.20
+delta_width_qr_center: 0.55
+delta_height_qr_center: 0.35
+delta_width_circles: 0.5
+delta_height_circles: 0.4
+circle_radius: 0.12
