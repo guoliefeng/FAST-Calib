@@ -25,3 +25,22 @@ sensors:
     camera_config: config/vehicles/224/cameras/rear_right.yaml
     roi_profile: config/roi_profiles/hesai/rear_right.yaml
     lidar_topic: auto
+
+
+
+c2c_calibration:
+  default_group: left
+  dictionary: DICT_6X6_250
+  marker_id: 1
+  marker_size_m: 1.05
+  groups:
+    left:
+      enabled: true
+      cam0: rear_left
+      cam1: front_left
+      data_dir: /home/glf/dataDisk/calib/224/aruco_A_side_1050_id1_data/left_pair
+    right:
+      enabled: true
+      cam0: rear_right
+      cam1: front_right
+      data_dir: /home/glf/dataDisk/calib/224/aruco_A_side_1050_id1_data/right_pair
