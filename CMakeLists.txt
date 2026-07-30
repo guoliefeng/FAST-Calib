@@ -80,5 +80,12 @@ catkin_install_python(PROGRAMS
   scripts/recompute_extrinsic_from_manual_centers.py
   scripts/c2c_calibrate_vehicle_aruco.py
   scripts/summarize_vehicle_extrinsics.py
+  scripts/export_camera_extrinsics_ros_tf.py
+  scripts/run_full_vehicle_calib.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+install(FILES
+  docs/vehicle_camera_calibration_workflow.md
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/docs
 )

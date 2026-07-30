@@ -1,0 +1,31 @@
+
+fx: 1016.6263171089
+fy: 1016.5096063284
+cx: 960.3539526336
+cy: 541.3279632809
+k1: 0.2256522207
+k2: -0.1840404589
+p1: 0.0000779020
+p2: -0.0000124405
+k3: -0.0108869204
+k4: 0.6197573512
+k5: -0.1915432036
+k6: -0.0601846458
+# FAST-Calib target parameters
+# 2000 mm × 1500 mm FAST-Calib calibration target
+
+marker_size: 0.250
+
+# Half of the horizontal/vertical distance between ArUco centers
+delta_width_qr_center: 0.725
+delta_height_qr_center: 0.500
+
+# Full horizontal/vertical distance between circle centers
+delta_width_circles: 0.650
+delta_height_circles: 0.650
+
+# Circle diameter: 450 mm
+circle_radius: 0.225
+
+# Allow calibration when at least 3 of the 4 markers are detected
+min_detected_markers: 3
