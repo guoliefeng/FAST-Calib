@@ -1,13 +1,13 @@
 # front camera config
 # Temporary 221-front intrinsics; replace with real intrinsics later.
-fx: 1037.72921
-fy: 1034.2894
-cx: 994.74842
-cy: 551.39056
-k1: -0.312007
-k2: 0.067521
-p1: -0.000809
-p2: -0.003917
+fx: 1001.24548
+fy: 1004.20125
+cx: 979.35288
+cy: 533.80208
+k1: -0.334463
+k2: 0.088262
+p1: 0.002124
+p2: -0.001313
 
 # FAST-Calib target parameters
 marker_size: 0.20

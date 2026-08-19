@@ -98,21 +98,24 @@ def rpath(s: str) -> Path:
     p = Path(str(s)).expanduser()
     return (PROJECT_ROOT / p).resolve() if not p.is_absolute() else p.resolve()
 
-def detect_topic(data_dir: str) -> str:
+def detect_topic(data_dir: str, group_prefix: str = "save_data_") -> str:
     try:
         import rosbag
     except Exception as e:
         print(f"[WARN] rosbag import failed, lidar_topic stays empty: {e}")
         return ""
-    bags = sorted(Path(data_dir).expanduser().glob("save_data_*/1.bag"))
+    data_path = Path(data_dir).expanduser()
+    bags = sorted(data_path.glob(f"{group_prefix}*/1.bag"))
     if not bags:
-        print(f"[WARN] no bag found in {data_dir}/save_data_*/1.bag")
+        bags = sorted(p for p in data_path.glob("*/1.bag") if p.parent.is_dir())
+    if not bags:
+        print(f"[WARN] no bag found under {data_dir} (prefix={group_prefix!r})")
         return ""
     with rosbag.Bag(str(bags[0]), "r") as bag:
         info = bag.get_type_and_topic_info()
     pcs = [(t, ti.msg_type, ti.message_count) for t, ti in info.topics.items() if ti.msg_type in POINTCLOUD_TYPES]
     if len(pcs) == 1:
-        print(f"[topic] {Path(data_dir).name}: {pcs[0][0]} ({pcs[0][1]}, count={pcs[0][2]})")
+        print(f"[topic] {data_path.name}: {pcs[0][0]} ({pcs[0][1]}, count={pcs[0][2]})")
         return pcs[0][0]
     print(f"[WARN] expected one point cloud topic in {bags[0]}, found={pcs}")
     return ""
@@ -146,8 +149,9 @@ def build_job(vehicle: str, sensor: str, cfg: Dict[str, Any], profile: str = "de
     job.setdefault("fast_calib", {})["config_file"] = str(camera_cfg)
 
     topic = cfg.get("lidar_topic", "auto")
+    group_prefix = (cfg.get("layout") or {}).get("group_prefix", "save_data_")
     if str(topic).lower() in ("auto", "unique", ""):
-        topic = detect_topic(data_dir)
+        topic = detect_topic(data_dir, group_prefix=group_prefix)
     job["fast_calib"]["lidar_topic"] = topic
 
     if roi_block.get("board_pcd_template"):

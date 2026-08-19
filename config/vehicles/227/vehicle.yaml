@@ -1,13 +1,13 @@
 vehicle_id: '227'
 sensors:
   front:
-    enabled: false
+    enabled: true
     data_dir: /home/glf/dataDisk/calib/0427/227_front
     camera_config: config/vehicles/227/cameras/front.yaml
     roi_profile: config/roi_profiles/hesai/front.yaml
     lidar_topic: auto
   rear:
-    enabled: false
+    enabled: true
     data_dir: /home/glf/dataDisk/calib/0427/227_rear
     camera_config: config/vehicles/227/cameras/rear.yaml
     roi_profile: config/roi_profiles/hesai/rear.yaml
@@ -21,8 +21,25 @@ sensors:
     fast_calib:
       multi_mode: permutation_search
   rear_right:
-    enabled: false
+    enabled: true
     data_dir: /home/glf/dataDisk/calib/0427/227_right_rear
     camera_config: config/vehicles/227/cameras/rear_right.yaml
     roi_profile: config/roi_profiles/hesai/rear_right.yaml
     lidar_topic: auto
+
+c2c_calibration:
+  default_group: left
+  dictionary: DICT_6X6_250
+  marker_id: 1
+  marker_size_m: 1.05
+  groups:
+    left:
+      enabled: true
+      cam0: rear_left
+      cam1: front_left
+      data_dir: /home/glf/dataDisk/calib/227/aruco_A_side_1050_id1_data/left_pair
+    right:
+      enabled: true
+      cam0: rear_right
+      cam1: front_right
+      data_dir: /home/glf/dataDisk/calib/227/aruco_A_side_1050_id1_data/right_pair

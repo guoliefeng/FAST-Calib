@@ -6,31 +6,61 @@ sensors:
     camera_config: config/vehicles/222/cameras/front.yaml
     roi_profile: config/roi_profiles/hesai_new/front.yaml
     lidar_topic: auto
+    layout:
+      group_prefix: mode_1_
+    extract_pcd:
+      frame: all
+      overwrite: true
     fast_calib:
       multi_mode: permutation_search
+      multi_min_groups: 3
+      lidar_min_plane_points: 300
   rear:
     enabled: true
     data_dir: /home/glf/dataDisk/calib/222/rear
     camera_config: config/vehicles/222/cameras/rear.yaml
     roi_profile: config/roi_profiles/hesai_new/rear.yaml
     lidar_topic: auto
+    layout:
+      group_prefix: mode_3_
+    extract_pcd:
+      frame: all
+      overwrite: true
     fast_calib:
       multi_mode: permutation_search
       max_group_rmse: 0.035
+      multi_min_groups: 3
+      lidar_min_plane_points: 300
   front_left:
     enabled: true
     data_dir: /home/glf/dataDisk/calib/222/front_left
     camera_config: config/vehicles/222/cameras/front_left.yaml
     roi_profile: config/roi_profiles/hesai_new/front_left.yaml
     lidar_topic: auto
+    layout:
+      group_prefix: mode_2_
+    extract_pcd:
+      frame: all
+      overwrite: true
     fast_calib:
       multi_mode: permutation_search
+      multi_min_groups: 2
+      lidar_min_plane_points: 300
   rear_right:
     enabled: true
     data_dir: /home/glf/dataDisk/calib/222/rear_right
     camera_config: config/vehicles/222/cameras/rear_right.yaml
     roi_profile: config/roi_profiles/hesai_new/rear_right.yaml
     lidar_topic: auto
+    layout:
+      group_prefix: mode_4_
+    extract_pcd:
+      frame: all
+      overwrite: true
+    fast_calib:
+      multi_mode: permutation_search
+      multi_min_groups: 3
+      lidar_min_plane_points: 300
 
     # fast_calib:
     #   lidar_detector_type: airy
