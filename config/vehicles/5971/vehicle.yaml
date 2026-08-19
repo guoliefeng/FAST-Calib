@@ -1,0 +1,101 @@
+vehicle_id: '5971'
+sensors:
+  front:
+    enabled: true
+    data_dir: /home/guoli/data/lianyun/5971
+    output_dir: ${data_dir}/_calib_output/front
+    camera_config: config/vehicles/5971/cameras/front.yaml
+    roi_profile: config/roi_profiles/hesai_new/front.yaml
+    lidar_topic: auto
+    layout:
+      group_prefix: mode_1_
+    roi:
+      # The 5971 front target sweeps from roughly y=-4 m to y=-8 m.
+      coarse: {x_min: -5.5, x_max: 0.8, y_min: -8.3, y_max: -3.0, z_min: -1.12, z_max: 0.4}
+      detector:
+        board_span: {x: [0.3, 3.2], y: [0.05, 3.0], z: [0.3, 1.9]}
+    fast_calib:
+      multi_mode: permutation_search
+      lidar_center_extraction_mode: template
+      lidar_min_plane_points: 250
+  rear:
+    enabled: true
+    data_dir: /home/guoli/data/lianyun/5971
+    output_dir: ${data_dir}/_calib_output/rear
+    camera_config: config/vehicles/5971/cameras/rear.yaml
+    roi_profile: config/roi_profiles/hesai_new/rear.yaml
+    lidar_topic: auto
+    layout:
+      group_prefix: mode_3_
+    roi:
+      # 5971 lidar_right_rear uses a different mounting/coordinate frame from
+      # the vehicle that supplied the generic hesai_new profile.
+      coarse: {x_min: -6.8, x_max: -0.8, y_min: -7.3, y_max: -3.0, z_min: -1.4, z_max: 0.55}
+      detector:
+        board_span: {x: [0.3, 3.0], y: [0.05, 2.0], z: [0.3, 2.1]}
+    fast_calib:
+      multi_mode: permutation_search
+      max_group_rmse: 0.03
+      lidar_center_extraction_mode: template
+      lidar_min_plane_points: 150
+  front_left:
+    enabled: true
+    data_dir: /home/guoli/data/lianyun/5971
+    output_dir: ${data_dir}/_calib_output/front_left
+    camera_config: config/vehicles/5971/cameras/front_left.yaml
+    roi_profile: config/roi_profiles/hesai_new/front_left.yaml
+    lidar_topic: auto
+    layout:
+      group_prefix: mode_2_
+    fast_calib:
+      multi_mode: permutation_search
+      lidar_center_extraction_mode: template
+      lidar_min_plane_points: 250
+  rear_right:
+    enabled: true
+    data_dir: /home/guoli/data/lianyun/5971
+    output_dir: ${data_dir}/_calib_output/rear_right
+    camera_config: config/vehicles/5971/cameras/rear_right.yaml
+    roi_profile: config/roi_profiles/hesai_new/rear_right.yaml
+    lidar_topic: auto
+    fast_calib:
+      lidar_center_extraction_mode: template
+      lidar_min_plane_points: 250
+    layout:
+      group_prefix: mode_4_
+    roi:
+      coarse: {x_min: 4.5, x_max: 6.1, y_min: -0.8, y_max: 1.9, z_min: -1.7, z_max: 0.55}
+      detector:
+        board_span: {x: [0.03, 1.6], y: [1.4, 2.6], z: [1.2, 2.1]}
+
+    # fast_calib:
+    #   lidar_detector_type: airy
+    #   airy_template_detector: true
+    #   airy_template_grid: 0.03
+    #   airy_template_angle_step_deg: 3.0
+    #   airy_template_ring_band: 0.025
+    #   airy_template_min_score: 80.0
+
+c2c_calibration:
+  default_group: left
+  dictionary: DICT_6X6_250
+  marker_id: 1
+  marker_size_m:  1.05
+  result_name: c2c_extrinsic_result
+  groups:
+    left:
+      enabled: true
+      cam0: rear_left
+      cam1: front_left
+      data_dir: /home/guoli/data/lianyun/5971/aruco_single_id1_data/left_pair
+      max_cross_0_to_1_mean_px: 1.5
+      max_cross_1_to_0_mean_px: 6.0
+      min_cross_filter_pairs: 3
+    right:
+      enabled: true
+      cam0: rear_right
+      cam1: front_right
+      data_dir: /home/guoli/data/lianyun/5971/aruco_single_id1_data/right_pair
+      max_cross_0_to_1_mean_px: 1.5
+      max_cross_1_to_0_mean_px: 5.0
+      min_cross_filter_pairs: 3

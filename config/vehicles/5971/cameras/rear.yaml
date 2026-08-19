@@ -1,0 +1,33 @@
+# rear/common camera config
+
+fx: 1015.4722926982
+fy: 1015.5581219901
+cx: 960.0043061129
+cy: 535.6246645278
+k1: 1.6940803862
+k2: 0.4925447100
+p1: -0.0000218320
+p2: 0.0001016324
+k3: 0.0146763943
+k4: 2.0896604462
+k5: 1.0573282217
+k6: 0.1027053377
+
+# FAST-Calib target parameters
+# 2000 mm × 1500 mm FAST-Calib calibration target
+
+marker_size: 0.250
+
+# Half of the horizontal/vertical distance between ArUco centers
+delta_width_qr_center: 0.725
+delta_height_qr_center: 0.500
+
+# Full horizontal/vertical distance between circle centers
+delta_width_circles: 0.650
+delta_height_circles: 0.650
+
+# Circle diameter: 450 mm
+circle_radius: 0.225
+
+# Allow calibration when at least 3 of the 4 markers are detected
+min_detected_markers: 3

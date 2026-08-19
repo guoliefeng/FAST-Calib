@@ -1,0 +1,108 @@
+vehicle_id: '5960'
+sensors:
+  front:
+    enabled: true
+    data_dir: /home/guoli/data/lianyun/5960
+    output_dir: ${data_dir}/_calib_output/front
+    camera_config: config/vehicles/5960/cameras/front.yaml
+    roi_profile: config/roi_profiles/hesai_new/front.yaml
+    lidar_topic: auto
+    layout:
+      group_prefix: mode_1_
+    roi:
+      coarse: {x_min: -6.6, x_max: -2.8, y_min: -7.1, y_max: -3.9, z_min: -1.8, z_max: 0.7}
+      detector:
+        board_span: {x: [0.3, 4.0], y: [0.05, 3.5], z: [0.3, 2.2]}
+    fast_calib:
+      multi_mode: permutation_search
+      lidar_center_extraction_mode: template
+      lidar_min_plane_points: 250
+  rear:
+    enabled: true
+    data_dir: /home/guoli/data/lianyun/5960
+    output_dir: ${data_dir}/_calib_output/rear
+    camera_config: config/vehicles/5960/cameras/rear.yaml
+    roi_profile: config/roi_profiles/hesai_new/rear.yaml
+    lidar_topic: auto
+    layout:
+      group_prefix: mode_3_
+    roi:
+      # The actual 5960 rear target is around x=-3, y=-4; the wider generic
+      # ROI otherwise connects to the ground plane.
+      coarse: {x_min: -5.0, x_max: -1.0, y_min: -5.2, y_max: -3.3, z_min: -1.5, z_max: 0.8}
+      detector:
+        board_span: {x: [1.0, 2.5], y: [0.3, 1.2], z: [0.3, 1.8]}
+    fast_calib:
+      multi_mode: permutation_search
+      lidar_center_extraction_mode: template
+      # 5960 rear board returns are sparse (104--154 in the ROI).
+      lidar_min_plane_points: 90
+      max_group_rmse: 0.03
+  front_left:
+    enabled: true
+    data_dir: /home/guoli/data/lianyun/5960
+    output_dir: ${data_dir}/_calib_output/front_left
+    camera_config: config/vehicles/5960/cameras/front_left.yaml
+    roi_profile: config/roi_profiles/hesai_new/front_left.yaml
+    lidar_topic: auto
+    layout:
+      group_prefix: mode_2_
+    roi:
+      coarse: {x_min: 4.5, x_max: 7.0, y_min: 0.0, y_max: 2.8, z_min: -1.5, z_max: 0.6}
+      detector:
+        board_span: {x: [0.3, 2.0], y: [1.0, 2.5], z: [0.3, 1.8]}
+    fast_calib:
+      multi_mode: permutation_search
+      lidar_center_extraction_mode: template
+      # 5960 front-left board returns are sparse (77--168 in the ROI).
+      lidar_min_plane_points: 70
+  rear_right:
+    enabled: true
+    data_dir: /home/guoli/data/lianyun/5960
+    output_dir: ${data_dir}/_calib_output/rear_right
+    camera_config: config/vehicles/5960/cameras/rear_right.yaml
+    roi_profile: config/roi_profiles/hesai_new/rear_right.yaml
+    lidar_topic: auto
+    fast_calib:
+      multi_mode: permutation_search
+      lidar_center_extraction_mode: template
+      # 5960 rear-right board returns are sparse (143--236 in the ROI).
+      lidar_min_plane_points: 120
+    layout:
+      group_prefix: mode_4_
+    roi:
+      coarse: {x_min: 4.5, x_max: 5.8, y_min: 0.0, y_max: 2.8, z_min: -1.5, z_max: 0.6}
+      detector:
+        board_span: {x: [0.3, 1.0], y: [1.0, 2.5], z: [0.3, 1.8]}
+
+    # fast_calib:
+    #   lidar_detector_type: airy
+    #   airy_template_detector: true
+    #   airy_template_grid: 0.03
+    #   airy_template_angle_step_deg: 3.0
+    #   airy_template_ring_band: 0.025
+    #   airy_template_min_score: 80.0
+
+c2c_calibration:
+  default_group: left
+  dictionary: DICT_6X6_250
+  marker_id: 1
+  marker_size_m: 1.05
+  result_name: c2c_extrinsic_result
+  groups:
+    left:
+      enabled: true
+      cam0: rear_left
+      cam1: front_left
+      data_dir: /home/guoli/data/lianyun/5960/aruco_single_id1_data/left_pair
+      max_cross_0_to_1_mean_px: 1.5
+      max_cross_1_to_0_mean_px: 5.0
+      min_cross_filter_pairs: 3
+    right:
+      enabled: true
+      cam0: rear_right
+      cam1: front_right
+      data_dir: /home/guoli/data/lianyun/5960/aruco_single_id1_data/right_pair
+      max_cross_0_to_1_mean_px: 1.5
+      max_cross_1_to_0_mean_px: 5.0
+      min_cross_filter_pairs: 3

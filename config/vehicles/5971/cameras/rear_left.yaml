@@ -1,0 +1,33 @@
+# Camera parameters for rear left camera of vehicle 228
+
+
+fx: 1017.8636023486
+fy: 1018.0234300529
+cx: 954.1209124787
+cy: 534.2598391968
+k1: 2.9044131454
+k2: 0.9711851184
+p1: -0.0000861255
+p2: -0.0000957203
+k3: 0.0272529631
+k4: 3.3027664203
+k5: 2.0035371486
+k6: 0.2021851952
+# FAST-Calib target parameters
+# 2000 mm × 1500 mm FAST-Calib calibration target
+
+marker_size: 0.250
+
+# Half of the horizontal/vertical distance between ArUco centers
+delta_width_qr_center: 0.725
+delta_height_qr_center: 0.500
+
+# Full horizontal/vertical distance between circle centers
+delta_width_circles: 0.650
+delta_height_circles: 0.650
+
+# Circle diameter: 450 mm
+circle_radius: 0.225
+
+# Allow calibration when at least 3 of the 4 markers are detected
+min_detected_markers: 3

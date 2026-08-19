@@ -7,13 +7,13 @@ Examples:
   python3 scripts/run_vehicle_calib.py --vehicle 224 --sensors front,rear --stage all
   python3 scripts/run_vehicle_calib.py --vehicle 221 --dry-run
 """
-import argparse, copy, csv, subprocess, sys
+import argparse, copy, csv, os, subprocess, sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 import yaml
 
-PROJECT_ROOT = Path("/home/glf/dataDisk/calib/FAST-Calib_ws/src/FAST-Calib").resolve()
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PIPELINE = PROJECT_ROOT / "scripts" / "calib_pipeline.py"
 DEFAULT_CFG = PROJECT_ROOT / "config" / "defaults" / "pipeline_default.yaml"
 PROFILE_CFG = {
@@ -23,7 +23,9 @@ PROFILE_CFG = {
 }
 VEHICLE_ROOT = PROJECT_ROOT / "config" / "vehicles"
 GENERATED_ROOT = PROJECT_ROOT / "config" / "generated_jobs"
-REPORT_ROOT = Path("/home/glf/dataDisk/calib/vehicle_calib_report").resolve()
+REPORT_ROOT = Path(
+    os.environ.get("FAST_CALIB_REPORT_ROOT", PROJECT_ROOT / "vehicle_calib_report")
+).expanduser().resolve()
 POINTCLOUD_TYPES = {"sensor_msgs/PointCloud2", "livox_ros_driver/CustomMsg"}
 
 def load_yaml(p: Path) -> Dict[str, Any]:
@@ -98,6 +100,11 @@ def rpath(s: str) -> Path:
     p = Path(str(s)).expanduser()
     return (PROJECT_ROOT / p).resolve() if not p.is_absolute() else p.resolve()
 
+def output_dir_for(cfg: Dict[str, Any]) -> Path:
+    data_dir = Path(str(cfg["data_dir"])).expanduser().resolve()
+    value = str(cfg.get("output_dir", "${data_dir}/_calib_output"))
+    return Path(value.replace("${data_dir}", str(data_dir))).expanduser().resolve()
+
 def detect_topic(data_dir: str, group_prefix: str = "save_data_") -> str:
     try:
         import rosbag
@@ -144,7 +151,7 @@ def build_job(vehicle: str, sensor: str, cfg: Dict[str, Any], profile: str = "de
     job = copy.deepcopy(defaults)
     job["job_name"] = f"{vehicle}_{sensor}"
     job["data_dir"] = data_dir
-    job["output_dir"] = "${data_dir}/_calib_output"
+    job["output_dir"] = cfg.get("output_dir", "${data_dir}/_calib_output")
     job["roi"] = deep_merge(job.get("roi", {}), roi_block)
     job.setdefault("fast_calib", {})["config_file"] = str(camera_cfg)
 
@@ -170,7 +177,7 @@ def yes(v: str) -> bool:
     return str(v).strip().lower() in ("1", "true", "yes", "ok")
 
 def summarize(vehicle: str, sensor: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
-    out = Path(cfg["data_dir"]) / "_calib_output"
+    out = output_dir_for(cfg)
     rows = read_csv(out / "batch_summary.csv")
     mpath = out / "04_multi" / "multi_result.yaml"
     multi = load_yaml(mpath) if mpath.exists() else {}
@@ -190,7 +197,7 @@ def summarize(vehicle: str, sensor: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
 def camera_info(camera_config: str) -> Dict[str, Any]:
     cfg_path = rpath(camera_config)
     cfg = load_yaml(cfg_path) if cfg_path.exists() else {}
-    keys = ("fx", "fy", "cx", "cy", "k1", "k2", "p1", "p2", "k3")
+    keys = ("fx", "fy", "cx", "cy", "k1", "k2", "p1", "p2", "k3", "k4", "k5", "k6")
     return {
         "config_file": str(cfg_path),
         "intrinsics": {k: cfg[k] for k in keys if k in cfg},
@@ -221,7 +228,7 @@ def export_vehicle_extrinsics(vehicle: str, names: List[str], sensors: Dict[str,
     for sensor in names:
         cfg = sensors[sensor]
         data_dir = Path(str(cfg["data_dir"])).expanduser()
-        output_dir = data_dir / "_calib_output"
+        output_dir = output_dir_for(cfg)
         final_path = output_dir / "final_extrinsic.yaml"
         multi_path = output_dir / "04_multi" / "multi_result.yaml"
         final = load_yaml(final_path) if final_path.exists() else {}
@@ -327,7 +334,7 @@ def main():
     rows = [summarize(args.vehicle, n, sensors[n]) for n in names]
     fields = ["vehicle","sensor","data_dir","status","rmse","four_center_count","selected_count","selected_ratio","warnings","failed_groups","final_extrinsic","multi_result"]
     with summary.open("w", encoding="utf-8", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=fields); w.writeheader(); w.writerows(rows)
+        w = csv.DictWriter(f, fieldnames=fields, lineterminator="\n"); w.writeheader(); w.writerows(rows)
     print("\n" + "="*90); print(f"[SUMMARY] {summary}"); print("="*90)
     export_vehicle_extrinsics(args.vehicle, names, sensors, report)
     failed = {k:v for k,v in codes.items() if v != 0}

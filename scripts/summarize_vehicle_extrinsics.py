@@ -612,7 +612,7 @@ def write_csv(path: Path, extrinsics: Dict[str, Any]) -> None:
         "tx", "ty", "tz", "qx", "qy", "qz", "qw", "roll_deg", "pitch_deg", "yaw_deg",
     ]
     with path.open("w", encoding="utf-8", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=fields)
+        w = csv.DictWriter(f, fieldnames=fields, lineterminator="\n")
         w.writeheader()
         for camera, ext in extrinsics.items():
             q = ext.get("quaternion_xyzw_cam_lidar", ["", "", "", ""])
