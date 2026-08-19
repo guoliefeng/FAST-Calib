@@ -57,7 +57,13 @@ def detect_qr_centers(image_path: str, cfg: dict, debug_path: str = None):
 
     dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_250)
     params = make_aruco_detector_parameters()
-    corners, ids, _ = cv2.aruco.detectMarkers(image, dictionary, parameters=params)
+    # OpenCV 4.7+ exposes marker detection through ArucoDetector, while older
+    # OpenCV builds provide the module-level detectMarkers function.
+    if hasattr(cv2.aruco, "detectMarkers"):
+        corners, ids, _ = cv2.aruco.detectMarkers(image, dictionary, parameters=params)
+    else:
+        detector = cv2.aruco.ArucoDetector(dictionary, params)
+        corners, ids, _ = detector.detectMarkers(image)
     if ids is None or len(ids) < int(cfg.get("min_detected_markers", 3)):
         raise RuntimeError(f"Only detected {0 if ids is None else len(ids)} markers in {image_path}")
 
@@ -86,11 +92,34 @@ def detect_qr_centers(image_path: str, cfg: dict, debug_path: str = None):
         board_corners.append(np.asarray(marker_corners, dtype=np.float32))
 
     board_ids = np.asarray([1, 2, 4, 3], dtype=np.int32)
-    board = cv2.aruco.Board_create(board_corners, dictionary, board_ids)
-
-    ok, rvec, tvec = cv2.aruco.estimatePoseBoard(corners, ids, board, K, dist, None, None)
-    if ok <= 0:
-        raise RuntimeError(f"estimatePoseBoard failed for {image_path}")
+    if hasattr(cv2.aruco, "Board_create") and hasattr(cv2.aruco, "estimatePoseBoard"):
+        board = cv2.aruco.Board_create(board_corners, dictionary, board_ids)
+        ok, rvec, tvec = cv2.aruco.estimatePoseBoard(corners, ids, board, K, dist, None, None)
+        if ok <= 0:
+            raise RuntimeError(f"estimatePoseBoard failed for {image_path}")
+    else:
+        # OpenCV 4.7+ no longer exposes estimatePoseBoard.  Solve the identical
+        # stacked marker-corner correspondence directly instead.
+        marker_index = {int(marker_id): index for index, marker_id in enumerate(board_ids)}
+        object_points = []
+        image_points = []
+        for detected_corners, detected_id in zip(corners, ids.reshape(-1)):
+            index = marker_index.get(int(detected_id))
+            if index is None:
+                continue
+            object_points.append(board_corners[index])
+            image_points.append(np.asarray(detected_corners, dtype=np.float32).reshape(4, 2))
+        if not object_points:
+            raise RuntimeError(f"No target markers found in {image_path}")
+        ok, rvec, tvec = cv2.solvePnP(
+            np.vstack(object_points).astype(np.float32),
+            np.vstack(image_points).astype(np.float32),
+            K,
+            dist,
+            flags=cv2.SOLVEPNP_ITERATIVE,
+        )
+        if not ok:
+            raise RuntimeError(f"solvePnP failed for {image_path}")
 
     R, _ = cv2.Rodrigues(rvec)
     board_circle_centers = np.asarray(board_circle_centers, dtype=np.float64)

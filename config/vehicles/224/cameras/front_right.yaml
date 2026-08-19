@@ -1,15 +1,15 @@
 # Temporary front_right camera config.
 # 当前临时复用已有相机内参。后续拿到该车 front_right 真实内参后，只改本文件。
 
-fx: 1019.539983
-fy: 1020.371160
-cx: 934.132180
-cy: 545.606007
+fx: 1061.39341
+fy: 1065.39045
+cx: 925.84631
+cy: 539.45076
+k1: -0.323911
+k2: 0.076980
+p1: -0.001056
+p2: 0.002365
 
-k1: -0.313954
-k2: 0.070619
-p1: -0.000869
-p2: 0.002769
 
 # FAST-Calib target parameters. Keep consistent with the current four-hole board.
 marker_size: 0.20

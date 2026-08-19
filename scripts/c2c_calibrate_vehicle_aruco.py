@@ -57,9 +57,14 @@ DEFAULT_MARKER_SIZE_M = 0.80
 MAX_PNP_REPROJ_PX = 0.80
 MAX_ROT_DEV_DEG = 1.20
 MAX_TRANS_DEV_M = 0.20
-MAX_CROSS_0_TO_1_MEAN_PX = 0.50
-MAX_CROSS_1_TO_0_MEAN_PX = 5.00
-MIN_CROSS_FILTER_PAIRS = 3
+# The optimized cam0 board pose is projected directly into cam1, so this is the
+# stable residual for a single planar marker.  The reverse residual starts from
+# an independent planar PnP solution in cam1 and can jump to the other IPPE
+# branch even when the stereo projection is correct; keep it diagnostic by
+# default instead of using it as a hard gate.
+MAX_CROSS_0_TO_1_MEAN_PX = 2.50
+MAX_CROSS_1_TO_0_MEAN_PX = 0.00
+MIN_CROSS_FILTER_PAIRS = 5
 
 
 def resolve_ros_path(path_text):
@@ -381,6 +386,27 @@ def find_pairs(data_dir):
         if p1 is not None:
             pairs.append((idx, p0, p1))
     return pairs
+
+
+def parse_pair_indices(value):
+    """Parse an optional comma-separated allowlist of capture pair indices."""
+    if not value:
+        return None
+    indices = set()
+    for item in str(value).split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            index = int(item)
+        except ValueError as error:
+            raise ValueError("Invalid --pair-indices entry: {!r}".format(item)) from error
+        if index < 0:
+            raise ValueError("--pair-indices values must be non-negative: {}".format(index))
+        indices.add(index)
+    if not indices:
+        raise ValueError("--pair-indices did not contain any indices")
+    return indices
 
 
 def marker_object_points(marker_size):
@@ -1013,6 +1039,8 @@ def main():
     parser.add_argument("--marker-size", type=float, default=None,
                         help="Override marker outer black square size in meters")
     parser.add_argument("--result-name", default="c2c_extrinsic_result", help="Output file prefix")
+    parser.add_argument("--pair-indices", default="",
+                        help="Optional comma-separated capture pair indices to use, e.g. 3,4,6,7")
     parser.add_argument("--allow-disabled", action="store_true",
                         help="Allow running a group with enabled: false")
     parser.add_argument("--no-filter", action="store_true", help="Disable automatic outlier filtering")
@@ -1021,7 +1049,8 @@ def main():
     parser.add_argument("--max-cross-0-to-1-mean", type=float, default=MAX_CROSS_0_TO_1_MEAN_PX,
                         help="Second-pass max mean cross reprojection from cam0 pose into cam1; <=0 disables this check")
     parser.add_argument("--max-cross-1-to-0-mean", type=float, default=MAX_CROSS_1_TO_0_MEAN_PX,
-                        help="Second-pass max mean cross reprojection from cam1 pose into cam0; <=0 disables this check")
+                        help=("Second-pass max mean cross reprojection from the independent cam1 planar PnP pose "
+                              "into cam0; <=0 disables this branch-ambiguous diagnostic as a hard check"))
     parser.add_argument("--min-cross-filter-pairs", type=int, default=MIN_CROSS_FILTER_PAIRS,
                         help="Minimum remaining pairs required to accept second-pass cross filtering")
     parser.add_argument("--no-global-opt", action="store_true", help="Disable scipy global nonlinear optimization")
@@ -1074,6 +1103,18 @@ def main():
     pairs = find_pairs(data_dir)
     if not pairs:
         raise RuntimeError("No pair_XXXX_cam0.* / pair_XXXX_cam1.* image pairs found in {}".format(data_dir))
+    requested_pair_indices = parse_pair_indices(args.pair_indices)
+    if requested_pair_indices is not None:
+        available_pair_indices = {index for index, _, _ in pairs}
+        missing_pair_indices = sorted(requested_pair_indices - available_pair_indices)
+        if missing_pair_indices:
+            raise RuntimeError("Requested pair indices not found in {}: {}".format(
+                data_dir, ",".join("{:04d}".format(index) for index in missing_pair_indices)
+            ))
+        pairs = [pair for pair in pairs if pair[0] in requested_pair_indices]
+        print("[INFO] using requested pair indices: {}".format(
+            ",".join("{:04d}".format(index) for index in sorted(requested_pair_indices))
+        ))
     print("[INFO] found {} image pairs".format(len(pairs)))
 
     records = []
@@ -1161,31 +1202,35 @@ def main():
 
     cross_filter_enabled = not args.no_filter and not args.no_cross_filter
     if cross_filter_enabled:
-        kept, cross_rejected = apply_cross_filter(used, args)
-        if cross_rejected:
-            min_pairs = max(3, int(args.min_cross_filter_pairs))
-            if len(kept) >= min_pairs:
-                print("[INFO] cross filter thresholds: cam0->cam1 mean <= {:.3f}px, cam1->cam0 mean <= {:.3f}px".format(
-                    args.max_cross_0_to_1_mean, args.max_cross_1_to_0_mean
-                ))
-                print("[INFO] cross filter rejected: {}".format(
-                    ",".join(format_cross_filter_rejection(r) for r in cross_rejected)
-                ))
-                for r in cross_rejected:
-                    r["filter_reason"] = "cross_filter"
-                used = kept
-                T_init = average_T([r["T_pair"] for r in used])
-                T_final, opt_result = run_global_optimization(
-                    used, T_init, obj_pts, K0, D0, K1, D1, no_global_opt=args.no_global_opt
-                )
-                compute_cross_errors(records, T_final, obj_pts, K0, D0, K1, D1, use_opt_pose=False)
-                compute_cross_errors(used, T_final, obj_pts, K0, D0, K1, D1, use_opt_pose=True)
-            else:
-                print("[WARN] cross filter would leave only {} pairs (< {}), keep first-pass result".format(
+        min_pairs = max(3, int(args.min_cross_filter_pairs))
+        print("[INFO] cross filter thresholds: cam0->cam1 mean <= {:.3f}px, cam1->cam0 mean <= {:.3f}px".format(
+            args.max_cross_0_to_1_mean, args.max_cross_1_to_0_mean
+        ))
+        while True:
+            kept, rejected_this_round = apply_cross_filter(used, args)
+            if not rejected_this_round:
+                break
+            if len(kept) < min_pairs:
+                print("[WARN] cross filter would leave only {} pairs (< {}), keep current result".format(
                     len(kept), min_pairs
                 ))
-                cross_rejected = []
-        else:
+                break
+
+            print("[INFO] cross filter rejected: {}".format(
+                ",".join(format_cross_filter_rejection(r) for r in rejected_this_round)
+            ))
+            for r in rejected_this_round:
+                r["filter_reason"] = "cross_filter"
+            cross_rejected.extend(rejected_this_round)
+            used = kept
+            T_init = average_T([r["T_pair"] for r in used])
+            T_final, opt_result = run_global_optimization(
+                used, T_init, obj_pts, K0, D0, K1, D1, no_global_opt=args.no_global_opt
+            )
+            compute_cross_errors(records, T_final, obj_pts, K0, D0, K1, D1, use_opt_pose=False)
+            compute_cross_errors(used, T_final, obj_pts, K0, D0, K1, D1, use_opt_pose=True)
+
+        if not cross_rejected:
             print("[INFO] cross filter rejected: none")
     elif args.no_cross_filter:
         print("[INFO] cross filter disabled by --no-cross-filter")
@@ -1234,10 +1279,17 @@ def main():
         "cross_filter_enabled": cross_filter_enabled,
         "cross_filter_max_0_to_1_mean_px": args.max_cross_0_to_1_mean,
         "cross_filter_max_1_to_0_mean_px": args.max_cross_1_to_0_mean,
+        "cross_1_to_0_note": (
+            "Independent planar-marker PnP diagnostic; disabled as a hard gate when threshold <= 0 "
+            "because IPPE can select the opposite pose branch."
+        ),
         "cross_filter_rejected": format_pair_indices(cross_rejected),
         "validation_saved": args.save_validation,
         "validation_grid": args.validation_grid,
         "validation_all_pairs": args.validation_all_pairs,
+        "requested_pair_indices": "" if requested_pair_indices is None else ",".join(
+            "{:04d}".format(index) for index in sorted(requested_pair_indices)
+        ),
     }
 
     yaml_path, csv_path, txt_path, static_tf = write_outputs(
