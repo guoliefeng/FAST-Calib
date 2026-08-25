@@ -1,15 +1,14 @@
 # 221-front_right camera config.
 # Intrinsics provided on 2026-04-28.
 
-fx: 1045.618822
-fy: 1046.422188
-cx: 971.136335
-cy: 547.311407
-
-k1: -0.305536
-k2: 0.064082
-p1: -0.000154
-p2: -0.001684
+fx: 1023.03367
+fy: 1026.46852
+cx: 959.37723
+cy: 545.05585
+k1: -0.328512
+k2: 0.087118
+p1: -0.001767
+p2: 0.000236
 
 # FAST-Calib target parameters. Keep consistent with the current four-hole board.
 marker_size: 0.20

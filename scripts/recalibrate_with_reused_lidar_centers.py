@@ -100,11 +100,11 @@ def main():
     parser = argparse.ArgumentParser(
         description="Recompute image-side centers with current intrinsics while reusing saved LiDAR centers."
     )
-    parser.add_argument("--data-dir", required=True, help="Dataset directory containing save_data_* groups.")
+    parser.add_argument("--data-dir", required=True, help="Dataset directory containing calibration groups.")
     parser.add_argument("--camera-config", required=True, help="Current camera intrinsics YAML.")
     parser.add_argument("--previous-output-dir", default="", help="Prior output; default: <data-dir>/_calib_output.")
     parser.add_argument("--output-dir", default="", help="New output; default: <data-dir>/_calib_output_intrinsics_fixed_lidar.")
-    parser.add_argument("--groups", default="all", help="Comma-separated save_data groups or all.")
+    parser.add_argument("--groups", default="all", help="Comma-separated calibration groups or all.")
     parser.add_argument("--max-multi-rmse", type=float, default=None)
     parser.add_argument("--max-group-rmse", type=float, default=None)
     parser.add_argument("--min-groups", type=int, default=None)
@@ -128,7 +128,22 @@ def main():
     min_groups = int(args.min_groups if args.min_groups is not None else 3)
     config = load_yaml(camera_config)
     wanted = parse_groups(args.groups)
-    group_dirs = sorted((path for path in data_dir.glob("save_data_*") if path.is_dir()), key=lambda path: natural_key(path.name))
+    previous_single = previous_output / "03_single"
+    recorded_group_names = {
+        record.parent.name
+        for record in previous_single.glob("*/circle_center_record.txt")
+        if record.is_file()
+    }
+    group_dirs = sorted(
+        (data_dir / name for name in recorded_group_names if (data_dir / name).is_dir()),
+        key=lambda path: natural_key(path.name),
+    )
+    if not group_dirs:
+        # Compatibility fallback for older outputs without a 03_single index.
+        group_dirs = sorted(
+            (path for path in data_dir.glob("save_data_*") if path.is_dir()),
+            key=lambda path: natural_key(path.name),
+        )
     if wanted is not None:
         available = {path.name for path in group_dirs}
         missing = sorted(wanted - available, key=natural_key)
@@ -136,7 +151,9 @@ def main():
             raise FileNotFoundError("Dataset groups not found: " + ", ".join(missing))
         group_dirs = [path for path in group_dirs if path.name in wanted]
     if not group_dirs:
-        raise RuntimeError(f"No save_data_* groups found in {data_dir}")
+        raise RuntimeError(
+            f"No calibration groups with saved circle_center_record.txt found in {data_dir}"
+        )
 
     output_dir.mkdir(parents=True)
     old_roi = previous_output / "02_roi"

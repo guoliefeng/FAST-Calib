@@ -1,13 +1,13 @@
 # 221 front-left camera config.
 # Intrinsics copied from config/old/221/front_left.yaml.
-fx: 1012.229557
-fy: 1013.831352
-cx: 925.288190
-cy: 514.768269
-k1: -0.303981
-k2: 0.067020
-p1: 0.000418
-p2: 0.000216
+fx: 1033.44884
+fy: 1039.63434
+cx: 959.05373
+cy: 521.79444
+k1: -0.305701
+k2: 0.064842
+p1: 0.001650
+p2: 0.000453
 
 # FAST-Calib target parameters
 marker_size: 0.20

@@ -54,9 +54,12 @@ DEFAULT_DICTIONARY = "DICT_6X6_250"
 DEFAULT_MARKER_ID = 1
 DEFAULT_MARKER_SIZE_M = 0.80
 
-MAX_PNP_REPROJ_PX = 0.80
-MAX_ROT_DEV_DEG = 1.20
-MAX_TRANS_DEV_M = 0.20
+# A single planar marker has two valid IPPE pose branches.  Per-camera PnP
+# transforms are therefore suitable only for rejecting gross failures before
+# bundle adjustment, not for tight extrinsic filtering.
+MAX_PNP_REPROJ_PX = 5.00
+MAX_ROT_DEV_DEG = 15.00
+MAX_TRANS_DEV_M = 2.00
 # The optimized cam0 board pose is projected directly into cam1, so this is the
 # stable residual for a single planar marker.  The reverse residual starts from
 # an independent planar PnP solution in cam1 and can jump to the other IPPE

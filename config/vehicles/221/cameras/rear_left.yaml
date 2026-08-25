@@ -1,13 +1,12 @@
 # Airy rear-left camera config
-# Airy rear-left known intrinsics.
-fx: 1020.321275
-fy: 1026.490039
-cx: 958.172619
-cy: 522.228574
-k1: -0.289258
-k2: 0.056707
-p1: 0.001357
-p2: -0.000796
+fx: 1038.19109
+fy: 1053.84625
+cx: 995.45440
+cy: 553.29981
+k1: -0.359080
+k2: 0.106116
+p1: 0.005238
+p2: -0.008418
 
 # FAST-Calib target parameters
 marker_size: 0.20

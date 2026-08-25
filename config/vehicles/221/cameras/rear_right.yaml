@@ -1,13 +1,14 @@
 # rear/common camera config
 # Temporary 221 corresponding-position intrinsics; replace with real intrinsics later.
-fx: 1019.539983
-fy: 1020.37116
-cx: 934.13218
-cy: 545.606007
-k1: -0.313954
-k2: 0.070619
-p1: -0.000869
-p2: 0.002769
+fx: 1019.02972
+fy: 1031.88210
+cx: 936.78866
+cy: 534.10358
+k1: -0.346881
+k2: 0.104931
+p1: -0.000873
+p2: 0.003475
+
 
 # FAST-Calib target parameters
 marker_size: 0.20
