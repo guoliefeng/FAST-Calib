@@ -3,6 +3,72 @@
 
 ## 设计方案
 
+###  FAST-Calib 简介
+
+当前 Camera–LiDAR 外参采用 FAST-Calib 方案。
+
+FAST-Calib 是一种基于标定板的 LiDAR–Camera 外参标定方法，支持机械式和固态 LiDAR，无需预先提供外参初值。
+
+其基本原理为：
+
+相机侧：检测标定板上的 ArUco 标记，获取标定板特征；
+LiDAR 侧：提取标定板平面及四个圆孔，通过边界检测和圆拟合获得圆心；
+外参计算：利用相机与 LiDAR 对同一标定板的几何观测，计算 T_cam_lidar；
+结果验证：将 LiDAR 点云投影到图像，检查投影重合情况。
+
+### 标定板设计
+#### Camera–LiDAR 标定板
+
+采用 2000 mm × 1500 mm 四孔标定板，用于 FAST-Calib Camera–LiDAR 外参标定。
+
+主要参数：
+
+标定板尺寸：2000 mm × 1500 mm；
+圆孔直径：450 mm；
+圆心横向间距：650 mm；
+圆心纵向间距：650 mm；
+ArUco 单码尺寸：250 mm × 250 mm；
+ArUco 字典：DICT_6X6_250。
+如图：
+![alt text](image-1.png)
+即： 
+|位置	| ArUco ID |
+|---|---|
+|左上	| 1|
+|右上|	2|
+|左下|	3|
+|右下|	4|
+
+
+#### Camera–Camera 标定板
+
+C2C 使用 1200 mm × 1200 mm 双面标定板，主要用于左右两组相机之间的外参标定。
+
+A 面：单 ArUco
+
+当前 C2C 标定实际使用 A 面。B面暂时未用。
+
+参数为：
+
+ArUco 字典：DICT_6X6_250；
+ArUco ID：1；
+实际 Marker 外框尺寸：1.05 m × 1.05 m。
+
+如图：
+![alt text](image.png)
+
+程序配置对应：
+
+c2c_calibration:
+  dictionary: DICT_6X6_250
+  marker_id: 1
+  marker_size_m: 1.05
+
+左右两组 C2C 均使用该 Marker：
+
+左侧：rear_left → front_left
+右侧：rear_right → front_right
+
 ### 标定拓扑
 
 优先直接标定四路相机，另外两路由相机间外参（C2C）推导：
