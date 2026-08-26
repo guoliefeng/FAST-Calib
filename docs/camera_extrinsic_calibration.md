@@ -14,21 +14,19 @@
 | `rear_left` | `lidar_left_front` | `front_left` + 左侧 C2C |
 | `front_right` | `lidar_right_rear` | `rear_right` + 右侧 C2C |
 
-坐标约定：
-
-```text
-p_cam  = T_cam_lidar * p_lidar
-p_cam1 = T_cam1_cam0 * p_cam0
-```
 
 左侧 C2C 固定为 `rear_left -> front_left`，右侧固定为 `rear_right -> front_right`。
+
+整体流程：
+
+**数据采集 → 标定板检测 → Camera–LiDAR 外参计算 → C2C 外参计算  → 投影验证** 
+
 
 ### 输出与验收
 
 - 直接标定输出：`<data_dir>/_calib_output/final_extrinsic.yaml`，核心矩阵为 `T_cam_lidar`。
 - 组内验证：`05_verify/*_board_overlay.png`，红色为 LiDAR 标定板点云投影。
 - C2C 输出：`c2c_extrinsic_result*.yaml` 和 `*_validation_projection/used_projection_contact_sheet.jpg`。
-- 全车汇总：`scripts/summarize_vehicle_extrinsics.py` 生成六路 YAML。
 
 ## 当前问题
 
@@ -60,16 +58,27 @@ python3 scripts/run_vehicle_calib.py --vehicle <vehicle> --stage all
 python3 scripts/run_vehicle_calib.py --vehicle 221  --stage all
 ```
 
+### 3 C2C 标定
+python3 scripts/c2c_calibrate_vehicle_aruco.py \
+    --vehicle <vehicle> --group left --save-validation
 
+python3 scripts/c2c_calibrate_vehicle_aruco.py \
+    --vehicle <vehicle> --group right --save-validation
 
-### 3. 标定 C2C 并汇总
+完成左右两组 Camera–Camera 外参计算。
 
-```bash
-python3 scripts/c2c_calibrate_vehicle_aruco.py --vehicle <vehicle> --group left --save-validation
-python3 scripts/c2c_calibrate_vehicle_aruco.py --vehicle <vehicle> --group right --save-validation
+### 3. 结果检查
 
-python3 scripts/summarize_vehicle_extrinsics.py --vehicle <vehicle> \
-  --direct-extrinsics <direct_extrinsics.yaml> \
-  --c2c-root <c2c_root> \
-  --output-dir <report_dir>
-```
+主要检查：
+
+  Camera–LiDAR 标定板点云投影是否与图像目标重合；
+  C2C 投影结果是否一致；
+##  当前结论
+
+现有方案已经具备六路相机外参标定和统一输出能力，可以满足当前车辆标定使用。
+
+下一阶段重点不是继续增加人工操作，而是提高：
+
+自动化程度、特征提取稳定性、标定精度和结果自检能力。
+
+最终目标是形成一套可在车端运行的标准化、一键式相机外参标定工具。
