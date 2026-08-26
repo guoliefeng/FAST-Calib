@@ -1,6 +1,5 @@
 # 相机外参标定说明
 
-本文说明本项目的车辆六相机外参标定方案、已知风险和标准操作。详细配置示例见 [vehicle_camera_calibration_workflow.md](vehicle_camera_calibration_workflow.md)。
 
 ## 设计方案
 
@@ -22,23 +21,22 @@ p_cam  = T_cam_lidar * p_lidar
 p_cam1 = T_cam1_cam0 * p_cam0
 ```
 
-左侧 C2C 固定为 `rear_left -> front_left`，右侧固定为 `rear_right -> front_right`。汇总脚本按矩阵方向自动推导缺失相机。
+左侧 C2C 固定为 `rear_left -> front_left`，右侧固定为 `rear_right -> front_right`。
 
 ### 输出与验收
 
 - 直接标定输出：`<data_dir>/_calib_output/final_extrinsic.yaml`，核心矩阵为 `T_cam_lidar`。
 - 组内验证：`05_verify/*_board_overlay.png`，红色为 LiDAR 标定板点云投影。
 - C2C 输出：`c2c_extrinsic_result*.yaml` 和 `*_validation_projection/used_projection_contact_sheet.jpg`。
-- 全车汇总：`scripts/summarize_vehicle_extrinsics.py` 生成六路 YAML/CSV。
-- ROS TF 默认使用 `T_lidar_camera = inverse(T_cam_lidar)`；只有驱动坐标约定明确要求时，才导出
-  `T_export = Rz(-90 deg) * inverse(T_cam_lidar)`。
+- 全车汇总：`scripts/summarize_vehicle_extrinsics.py` 生成六路 YAML。
 
 ## 当前问题
 
-1. **四孔平面对称**：四个圆心可产生 180 度对称解。单看 RMSE 可能更小，但相机位置会落到错误一侧；必须同时检查圆心编号、板点投影和 `base_link` 物理位置。
-2. **内参变更会改变外参**：更新内参后，图像 QR/ArUco 中心会变化。不能继续复用旧 `T_cam_lidar`；可以复用已确认的 LiDAR 圆心，重新计算图像侧和联合 SVD。
-3. **LiDAR 驱动 yaw 变化**：驱动坐标绕 Z 轴变化时，先更新 ROI；不得在标定算法内硬编码旋转。导出时只能选择一种 TF 约定，不能与原 TF 同时发布。
-4. **C2C 是长基线间接结果**：平面标记存在 IPPE 分支歧义，反向 PnP 误差只能作诊断。C2C 至少检查有效组数、前向投影、留一法稳定性和车辆物理位置；数据少的 C2C 应标记为 `candidate`/`hold`。
+1. **标定板点云ROI**：目前标定板点云ROI 提取不一定准确， 有时需要人为在得到ROI范围。
+2. **标定板点云圆心提取困难**：有时标定板的点云过于稀疏以及噪声较大，使得圆心提取不好。
+3. **当前操作不方便**：当前标定流程过于繁琐，应该是车上计算得到外参，例如车上启动程序，然后在标定板放好，便可得到外参。
+4. **标定方案可靠性存疑**：当前标定方案仅作为临时方案处理，后期都是靠相机与雷达直接的关系得到外参，其中有两个相机只能通过c2c的方式得到外参，这样存在累计误差，比如相机到base_link 的误差存在i相机和雷达间的误差以及雷达与base_link 的误差，两层误差传播，而车上两个用c2c标定的相机存在三层误差，如果感知仅使用相机和雷达间的投影关系那么仅存在相机和雷达的误差，但如果感知使用相机和base_link 的关系，那么还会雷达到base_link这一层的误差，如果后期想要提高标定精度，这一层是一定要考虑到的，如果是想要相机和base_link 的外参，可考虑相机与 INS标定，如此一来，相机和base_link 的传播误差会少一层，但是相机与雷达的误差会多一层，这种资源的协调的分配需要考虑，哪个需要分配多些，哪些需要分配少些，需商榷。
+5. **方案需调研充分**：当前标定方案用FAST-Calib ，确实可以得到外参，但是可靠性不一定好。后期可以参考其他论文，比如 General, Single-shot, Target-less, and Automatic LiDAR-Camera Extrinsic Calibration Toolbox ，此论文是最近几年 Targetless LiDAR-Camera 标定的标杆项目之一，以及Direct, Targetless and Automatic Joint Calibration of LiDAR-Camera Intrinsic and Extrinsic \ PLK-Calib: Single-shot and Target-less LiDAR-Camera Extrinsic Calibration using Plücker Lines\ RAVES-Calib:Robust, Accurate and Versatile Extrinsic Self Calibration Using Optimal Geometric Features . 如果是相机与INS 的标定，基本都是手眼标定，可以参考：zxl19/Hand_Eye_Extrinsic_Calibration ，此项目支持lidar -ins , camera- ins ,lidar - camera,甚至三传感器标定。还有GNSS-Aided Online Camera Calibration ，还可以把camera-imu-GNSS 一起标定；总而言之，后面的同事要开展此工作，需先调研充分。
 
 ## 操作说明
 
@@ -46,7 +44,7 @@ p_cam1 = T_cam1_cam0 * p_cam0
 
 检查 `config/vehicles/<vehicle>/`：
 
-- 六份 `cameras/*.yaml` 的内参和畸变模型；
+- 六份 `cameras/*.yaml` 的内参；
 - `vehicle.yaml` 的数据目录、相机-LiDAR对应关系和 C2C 相机顺序；
 - ROI 与当前 LiDAR 坐标系一致；
 - `marker_size`（四孔板小码）与 `c2c_calibration.marker_size_m`（C2C 单码）分别按实物填写。
@@ -54,34 +52,17 @@ p_cam1 = T_cam1_cam0 * p_cam0
 ### 2. 直接标定四路相机
 
 ```bash
-cd /home/glf/dataDisk/calib/FAST-Calib_ws/src/FAST-Calib
-source /opt/ros/noetic/setup.bash
-source /home/glf/dataDisk/calib/FAST-Calib_ws/devel/setup.bash
+
 
 python3 scripts/run_vehicle_calib.py --vehicle <vehicle> --stage all
+
+# 例如：
+python3 scripts/run_vehicle_calib.py --vehicle 221  --stage all
 ```
 
-先检查每路 `final_extrinsic.yaml` 的状态、RMSE、`selected_groups` 和 `05_verify` 投影图。若圆心顺序有疑问：
 
-```bash
-bash scripts/run_center_order_audit.sh <data_dir>
-```
 
-### 3. 内参更新、复用 LiDAR 圆心
-
-确认旧 LiDAR 圆心正确后，不必重新跑 bag：
-
-```bash
-python3 scripts/recalibrate_with_reused_lidar_centers.py \
-  --data-dir <data_dir> \
-  --camera-config config/vehicles/<vehicle>/cameras/<camera>.yaml \
-  --previous-output-dir <old_output_dir> \
-  --output-dir <new_output_dir>
-```
-
-新输出目录必须与旧目录不同；完成后重新检查 `05_verify`。
-
-### 4. 标定 C2C 并汇总
+### 3. 标定 C2C 并汇总
 
 ```bash
 python3 scripts/c2c_calibrate_vehicle_aruco.py --vehicle <vehicle> --group left --save-validation
@@ -92,5 +73,3 @@ python3 scripts/summarize_vehicle_extrinsics.py --vehicle <vehicle> \
   --c2c-root <c2c_root> \
   --output-dir <report_dir>
 ```
-
-发布前至少满足：直接四路板点投影正常、C2C 接触表正常、六路在 `base_link` 下位置符合前/后/左/右安装关系。仅在这些检查都通过后，才发布对应的一套 TF YAML。
